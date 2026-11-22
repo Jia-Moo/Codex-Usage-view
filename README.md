@@ -1,145 +1,314 @@
 # Codex Usage View
 
-**本地优先、只读、安全、零 npm 依赖的 Codex Token 用量分析仪表盘。**
+**A local-first, read-only usage analytics dashboard for OpenAI Codex.**  
+**本地运行的 Codex Token 用量分析工具——知道每个项目、模型和对话用了多少 Token，以及按 API 价格估算的等效成本。**
 
-这是一个独立实现，并非 Codex Usage Desktop 的代码拷贝。借鉴了按会话、项目、模型分析的产品思路，但不使用其源码，不读取或管理登录凭据，也不提供自动更新器。
+[English documentation](README_EN.md) · [安全与隐私](SECURITY.md) · [参与贡献](CONTRIBUTING.md) · [MIT License](LICENSE)
 
-## 功能
+![Tests](https://github.com/Jia-Moo/Codex-Usage-view/actions/workflows/ci.yml/badge.svg)
 
-- **总体用量**：输入、缓存输入、非缓存输入、输出、其中的推理 Token 和总 Token。
-- **缓存命中率**：缓存输入 ÷ 总输入；基于 API 分级价格估算缓存节省。
-- **项目分析**：按会话工作目录（cwd）分组，同名不同路径的项目不混淆；支持点击进入查看按模型、日期与对话拆分的项目用量。
-- **模型分析**：每次 token_count 增量归属于当时的模型，多模型会话正确拆分。
-- **日期分析**：按 Token 事件实际发生的本地日期汇总，而不是会话开始日期。
-- **会话明细**：搜索会话，点击查看单个对话按模型及日期的用量详情。
-- **API 等效成本**：内置常用模型的官方 Standard API 单价，按普通输入、缓存输入和输出的不同单价计价；未定价模型清晰标注。
-- **可选价格同步**：只有点击按钮时才会下载 [LiteLLM 公共定价目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)。支持手动覆盖模型价格。
-- **CSV 导出**：将当前筛选的明细导出为 Excel 可读取的 CSV，包含价格、缓存命中率。
-- **自动刷新**：浏览器页面在前台时每分钟检查本机日志；未变化的文件直接复用本地索引，新增记录按字节续读。
-- **隐藏标题**：支持隐私模式，不在界面展示第一条用户消息摘要。
+> **无需 API Key，不必登录第三方平台，也不需要上传聊天记录。** 数据读取与计算都在你的电脑上进行。只有你主动点击「同步其他模型价格」时，程序才会从公开定价来源下载 JSON。  
+> 这是一款**独立开发、非 OpenAI 官方**的开源工具，也不是 Codex Usage Desktop 的代码分支。
 
-## Windows 11 安装与使用
+## 为什么开发它？
 
-当前版本是 **Node.js 标准库本机服务 + 浏览器可视化仪表盘**，不需要 Electron、Tauri 或第三方 npm 依赖。不需要联网安装 npm 包。它不是云端网站：所有统计都在你的电脑完成。
+使用 ChatGPT 订阅中的 Codex App 或 Codex CLI 时，我们往往知道自己运行了哪些模型和项目，却不容易直观看到：
 
-1. 安装 [Node.js 22 或更新版本](https://nodejs.org/)。可在 Windows 终端执行以下命令，之后重新启动终端：
+- 某个项目到底用了多少 Token？不同模型各用了多少？
+- 某次长对话中，多少输入来自缓存？缓存命中率和节省的等效费用是多少？
+- 每天、最近 7/30/90 天的使用趋势如何？
+- 如果将相同的 Token 量按公开 API 单价计价，**等效成本**大概是多少？
+- 数百 MB 的超长 Agent 会话日志，会不会在统计时被遗漏？
 
-       winget install OpenJS.NodeJS.LTS
+Codex Usage View 直接解析本机 Codex 写下的 JSONL 会话日志，提供清晰的分析页面。**不接管 Codex 账号、不读取认证文件、不需要云端数据库。**
 
-2. 在本仓库右上角选择 **Code → Download ZIP** 并解压，或执行：
+## 功能一览
 
-       git clone https://github.com/Jia-Moo/Codex-Usage-view.git
+| 功能 | 说明 |
+| --- | --- |
+| 总览仪表盘 | 输入、缓存输入、非缓存输入、输出、Reasoning Token 与总量 |
+| 缓存分析 | 缓存命中率、普通输入与缓存输入的占比、按价格估算的节省 |
+| 按项目统计 | 根据工作目录（`cwd`）分组；**点击项目**继续查看各模型、日期和会话明细 |
+| 按模型统计 | 区分每个模型的输入、缓存、输出和等效费用，支持会话中途切换模型 |
+| 按日期统计 | 根据日志 Token 事件发生的**本地日期**归类，而不是简单按会话创建日期 |
+| 单独会话 | 搜索会话，查看每个会话按模型和日期拆分的用量 |
+| API 等效成本 | 按普通输入、缓存输入、输出三档单价分别计算；缺失价格明确提示 |
+| 价格管理 | 内置部分已核对的 OpenAI Standard API 价格；可选同步 LiteLLM、手动覆盖费率 |
+| 大日志支持 | **流式解析**超大 JSONL；无 48 MiB 整文件跳过限制 |
+| 增量扫描 | 未改变的文件直接复用本地索引；已追加的文件从上次读取位置续读 |
+| CSV 导出 | 将当前筛选结果导出为 Excel 可打开的 UTF-8 CSV |
+| 简洁界面 | 浅色中性设计、无需前端构建步骤、无需第三方 npm 包 |
 
-3. 在解压后的目录打开终端，执行：
+## 快速开始
 
-       npm start
+### 环境要求
 
-4. 浏览器自动打开本地界面。按 Ctrl+C 停止本机服务。
+- **Node.js 22 或更新版本**（Node.js 24 可用）
+- Windows 10/11、macOS 或 Linux
+- 本地已经使用过 Codex App / Codex CLI，并且保留了 JSONL 会话日志
+- 一个现代浏览器（Chrome、Edge、Firefox、Safari 等）
 
-**Windows 还可直接双击根目录的 start_windows.cmd 启动**，或双击 start_private.cmd 使用隐藏标题模式（仍需预先安装 Node.js 22+）。
+本项目运行时只使用 **Node.js 标准库**。**无需 `npm install`，不依赖数据库，也不要求设置 API Key。**
 
-无需执行 npm install。
+### Windows：最简单的安装方式
 
-### 自定义日志位置
+1. 安装 [Node.js](https://nodejs.org/)（如果已经安装 v22+，跳过此步）。在 PowerShell 输入 `node -v` 可检查版本。
+2. 在 GitHub 仓库点击 **Code → Download ZIP**，解压到任意文件夹。
+3. **双击 `start_windows.cmd`**；程序将打开本地浏览器仪表盘。
+4. 停止程序时，回到命令窗口按 **Ctrl+C** 或关闭该窗口。
 
-默认读取当前账户 CODEX_HOME 环境变量指定的目录，否则读取用户主目录下的 .codex。
+如果希望隐藏对话标题，请改为双击 **`start_private.cmd`**。
 
-Windows 显式指定：
+### 使用 Git（推荐开发者）
 
-    node src/server.mjs --root "C:\Users\YourName\.codex"
+~~~powershell
+git clone https://github.com/Jia-Moo/Codex-Usage-view.git
+cd Codex-Usage-view
+npm start
+~~~
 
-从 Windows 读取 WSL 的示例：
+或者使用：
 
-    node src/server.mjs --root "\\wsl.localhost\Ubuntu\home\user\.codex"
+~~~powershell
+node src/server.mjs
+~~~
 
-隐藏对话标题：
+程序会在 **127.0.0.1** 随机端口启动本地服务，输出可访问地址，并尝试自动打开浏览器。它不是云端网站；关闭终端中的进程后，服务也会退出。
 
-    npm run start:private
+### 默认扫描目录
 
-自定义端口且不自动打开浏览器：
+默认使用 `CODEX_HOME` 环境变量指向的目录；未设置时使用当前用户的 `~/.codex`。
 
-    node src/server.mjs --port 18788 --no-browser
+常见目录：
 
-日志应位于所选目录的 sessions/ 或 archived_sessions/ 下。Codex App 和 CLI 是否共用 CODEX_HOME 取决于你的配置。
+| 系统 | 示例路径 |
+| --- | --- |
+| Windows | `C:\Users\你的用户名\.codex` |
+| macOS / Linux | `~/.codex` |
+| Windows 读取 WSL | `\\wsl.localhost\Ubuntu\home\user\.codex` |
 
-## v0.3.0：大文件扫描与增量索引
+扫描目标是其中的 `sessions/**/*.jsonl` 和 `archived_sessions/**/*.jsonl`。如果你的 Codex App、CLI 或 WSL 使用不同的数据目录，可以指定实际路径：
 
-- **取消单文件 48 MiB 跳过限制**。JSONL 按 256 KiB 数据块流式读取；单条记录可达 32 MiB（仅超过此单行限制的记录会被跳过并提示），无需加载整个会话文件。
-- **本地增量索引**：首次完整扫描后，未变化的日志直接复用摘要；文件仅追加时从最近完整 JSONL 记录的字节位置继续解析；文件缩短、被覆盖或文件尾签名不符时自动重新扫描。
-- **超大日志验证**：使用 2026-10-28、2026-11-18、2026-11-20 的三份超过原 48 MiB 限制的实际日志做过本地流式验证，均可解析，日志没有被复制到 GitHub；仓库附带大于 48 MiB 的生成式测试样本来检测回归。
-- **新版会话消息兼容**：识别 `response_item` 中 `type=message,role=user` 的用户消息及输入文本，避免将新版本 Codex 的对话数统计为零；与旧式 `event_msg.user_message` 并存时不会简单累加。
-- **统计状态可见**：页面顶部显示本次完整扫描、增量续读和缓存复用的文件数量。
-- **隐私说明**：本机 `~/.codex-usage-view/usage-index-v1-*.json` 保存**衍生统计、项目路径、会话编号、可选标题摘要（前 110 字）及续读状态**，不保存完整聊天消息或工具输出，不会上传网络。用 `--hide-titles` 可以禁用本地标题摘要的提取。
-- **兼容无结尾换行的有效 JSON 行**，同时不错误提交正在写入的不完整行。
-- 当前**仍不支持 `.jsonl.zst` 压缩格式**，会话源码和密钥文件不在扫描范围。
+~~~powershell
+node src/server.mjs --root "C:\Users\YourName\.codex"
+~~~
 
-## v0.2.0：费用自动显示与项目详情
+只在本机打开服务，不自动唤起浏览器：
 
-- **已解决首次运行费用为 0 的问题**：内置 2026-11-22 核查的 OpenAI 官方 Standard API 模型价格，包括 `gpt-5.1-codex`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-luna`、`gpt-6.2-sol` 与 `gpt-6.2-astra`。常见模型的等效价格不用点击同步便可计算。
-- **未知模型绝不被当作 0 美元**：显示“未定价”，若部分模型价格已知，则显示“≥ 已知成本”，并在 API 价格页列出未识别模型供补全。
-- **手动价格 > 已验证内置官方价格 > LiteLLM 同步价格**；手动覆盖不会因再次同步被清除。
-- **项目详情**：在“项目分析”里点击项目名称，即可查看该项目按模型拆分的输入、缓存、输出、命中率、成本、Token 占比，继续下钻到日期和会话。
-- **视觉更新**：由紫色渐变深色界面调整为素雅的浅色中性数据工具风格。
-- 等效费用始终只是按 **Standard API 文本 Token 单价** 估算，不含不同计费服务层、长上下文溢价、缓存写入附加费、工具调用费，也不是 Codex 会员实际扣费。某些模型如果没有官方可用单价，会继续显示未定价。
+~~~bash
+node src/server.mjs --no-browser --port 18788
+~~~
 
-内置费率可在以下 [OpenAI 官方定价页面](https://developers.openai.com/api/docs/pricing) 核查；首次运行不联网，同步缺失价格仍是可选操作。
+隐私模式（不提取用户消息作为会话标题）：
 
+~~~bash
+node src/server.mjs --hide-titles
+~~~
 
-## 数据统计口径
+## 如何使用
 
-| 项目 | 计算方式 |
-|---|---|
-| 输入 Token | 普通输入 + 缓存输入 |
-| 总 Token | 输入 + 输出 |
-| Reasoning Token | **已经计入输出**，不能重复相加 |
-| 缓存命中率 | 缓存输入 / 输入 |
-| API 等效成本 | (非缓存输入 × 输入单价 + 缓存输入 × 缓存单价 + 输出 × 输出单价) / 1000000 |
-| 缓存节省 | 所有输入按普通输入计价 - 实际分级计价 |
+1. **总览**：选择 7、30、90、365 天或全部时间，查看 Token 总量、缓存效率、等效成本及每日趋势。
+2. **项目分析**：查看各项目的用量和费用。**点击任意项目名称**，进一步查看每个模型的输入、缓存、输出、Token 占比、日期统计和会话列表。
+3. **模型分析**：比较不同模型的用量结构和成本。
+4. **会话明细**：按项目、模型、日期或关键词筛选；点击某个对话查看更细的数据。
+5. **API 价格**：检查哪些模型已计价。对于未识别的模型，可选择同步公开价格，或者按 USD / 百万 Token 手动输入价格。
+6. **导出 CSV**：导出当前筛选范围内的模型/日期/会话数据，便于使用 Excel 进一步分析。
 
-价格均为 USD / 百万 Token。没有价格的模型不会假装免费：标记为未定价，已知成本属于**不完整的部分合计**。
+### 费用为什么是「未定价」？
 
-首次运行不会联网，内置的已核实官方价格会立即生效；打开 **API 价格 → 同步其他模型价格** 后才下载第三方定价 JSON。LiteLLM 可能滞后，遇到差异以 [OpenAI 官方 API 定价](https://openai.com/api/pricing/) 为准。
+**「未定价」不是 0 美元。** 如果某个模型名称不在价格表中，软件不会猜测价格：
 
-**等效成本不是 ChatGPT Plus / Pro 会员的实际账单、会员配额消耗或 Codex Credits。** 本工具不会访问账户额度 API。
+- 全部模型都缺少价格：显示 **未定价**；
+- 仅部分模型有价格：显示 **≥ 已知成本**（这是下限，并非完整合计）；
+- 有明确价格且 Token 非零：显示计算出的等效美元金额；
+- 对于非常小的金额，界面提高小数显示精度，避免四舍五入后看起来为 0。
 
-### Token 差分逻辑
+价格优先级：**用户手动覆盖 > 内置官方 Standard API 单价 > 可选 LiteLLM 价格**。手动覆盖不会因同步而被清除。
 
-读取 Codex 的 event_msg.token_count.info.total_token_usage 累计快照，逐次求非负差分；累计相同的快照不会重复计数。若计数器发生下降，视为开启新段；有 last_token_usage 时优先使用其单次用量并依靠累计值去重。若缺少累计快照，则尽力使用 last_token_usage。模型归属取对应 turn_context 中的 model。
+> **重要：API 等效成本 ≠ ChatGPT Plus/Pro 订阅实际扣款、Codex Credits 消耗或会员额度。** 价格可能变动，而且 Standard API 计费未必覆盖其他服务档位、工具调用等额外计费因素。请以 [OpenAI 官方 API 定价](https://developers.openai.com/api/docs/pricing) 为准。
 
-Codex 日志格式会随版本更新而变化。如果本机日志没有 token_count 或模型信息，本工具无法推断丢失的数据。
+## Token 统计规则
 
-## 隐私与安全
+Codex 会在日志中写入 `event_msg` / `token_count` 数据，例如：
 
-- **不会读取 auth.json、API Key、Refresh Token 或任何登录凭据**。
-- 只遍历指定 Codex 根目录的 sessions/**/*.jsonl 和 archived_sessions/**/*.jsonl，不跟随符号链接。
-- 本机服务仅绑定 127.0.0.1，并校验 Host；统计 API 使用进程级随机令牌。
-- 资源全部本机加载；无云数据库、遥测、第三方脚本或自动更新服务器。
-- 同步定价时只向固定的 GitHub Raw URL 发起请求，不附加本机模型、项目、聊天内容或凭据。
-- 用户目录的 .codex-usage-view 文件夹会保存价格配置及本地统计索引，统计索引只含派生用量与必要会话元数据（会话 ID、项目路径、可选标题前 110 字、续读状态），不保存会话原文或工具输出。
-- 默认在本机界面显示第一条用户消息的前 110 字作为会话标题；可使用 --hide-titles 禁用。
-- 导出文件在用户当前浏览器本地生成，不发送到服务器。
+~~~json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "token_count",
+    "info": {
+      "last_token_usage": {
+        "input_tokens": 10000,
+        "cached_input_tokens": 8000,
+        "output_tokens": 2000,
+        "reasoning_output_tokens": 500
+      }
+    }
+  }
+}
+~~~
 
-见 [SECURITY.md](SECURITY.md)。
+主要计算关系如下：
 
-## 开发与测试
+| 指标 | 计算口径 |
+| --- | --- |
+| 非缓存输入 | 输入 Token − 缓存输入 Token |
+| 缓存命中率 | 缓存输入 / 输入 Token |
+| 总 Token | 输入 Token + 输出 Token |
+| Reasoning Token | **输出 Token 的一部分**，不应再次加到总量 |
+| API 等效成本 | (非缓存输入 × 普通输入单价 + 缓存输入 × 缓存输入单价 + 输出 × 输出单价) ÷ 1,000,000 |
+| 缓存节省 | 假设全部输入按普通输入单价计费的金额 − 使用缓存单价的金额 |
 
-需要 Node.js 22+：
+- 优先使用每次调用的 `last_token_usage`，并参考累计的 `total_token_usage` 去除重复快照。
+- 没有单次调用数据时，使用累计值差分；累计计数器下降时视作新统计段。
+- 每条 Token 增量尽量归属于当时的模型和日期。
+- 兼容旧式 `event_msg.user_message` 和新版 `response_item` 用户消息记录，以减少对话计数漏报。
+- 数据准确性取决于日志本身是否完整，以及当前 Codex 版本是否继续输出相关字段。
 
-    npm run check
-    npm test
+### 为什么能处理大文件？
 
-CI 使用 GitHub Actions 在 push 和 Pull Request 时运行上述检查。
+早期版本曾对超过 48 MiB 的日志直接跳过；现在改为：
 
-## 当前限制
+1. 使用 Node.js 流式读取 JSONL，**不把整个日志载入内存**；
+2. 对每一条 JSONL 记录设置默认 **32 MiB 单行安全限制**，超过限制的单行会跳过并给出提醒；
+3. 在本地缓存已解析的统计摘要；
+4. 对仅追加的文件从上次的 JSONL 位置续读；文件改写或截断后重新扫描；
+5. 未发生变化的文件直接使用缓存，避免每次刷新重复解析数百 MB 日志。
 
-- 当前只解析 .jsonl；暂不解析压缩的 .jsonl.zst 归档。
-- 子 Agent 如果拥有独立会话日志，会作为单独会话统计，暂未构建父子 Agent 归属树。
-- 历史日志如果被删除或缺失，无法从会员后台恢复。
-- 单价可能缺失或滞后，需要同步/手动输入后估算。
-- 手动费率独立保存，重新同步公开价格不会覆盖手动设置。
-- 首次扫描仍需完整解析历史日志；之后仅处理发生变化的文件。
-- 暂无独立 Windows EXE；此版本优先建立可审核的统计核心及界面。
+**首次扫描大量历史日志仍可能需要较长时间**。索引加速的是后续扫描，不会降低第一次完整读取的数据量。
 
-## 许可
+## 隐私与安全设计
 
-本项目采用 MIT License（[LICENSE](LICENSE)）。
+以下行为来自当前版本的实现与源码，欢迎独立审计：
+
+| 项目 | 当前行为 |
+| --- | --- |
+| Codex 原始日志 | **只读**，不会删除、改写或上传 |
+| `auth.json` / 登录令牌 | 不读取、不管理、不存储 |
+| 本地 Web 服务 | 仅监听 `127.0.0.1`，校验 Host，API 使用随机本机令牌 |
+| 聊天数据 | 在本地读取并解析；不上传到 GitHub 或开发者服务器 |
+| 用户标题 | 默认选取首条用户消息的前 110 字用于本机显示；可通过 `--hide-titles` 禁用 |
+| 本地索引 | 保存派生统计、日志文件路径、项目路径、会话 ID、可选标题摘要及续读状态 |
+| 网络访问 | 默认不主动请求远程服务；点击价格同步时才访问固定的公开 GitHub Raw JSON |
+| 前端资源 | 由本地服务提供，无 CDN、第三方脚本、外部字体和遥测 SDK |
+| 自动更新 | 不含自动更新器、账号切换或远程控制功能 |
+
+**注意：本地优先不意味着零风险。** 统计索引与标题摘要仍可能包含项目名称、目录及私密文字。若电脑本身已有恶意进程，应用无法防止同账户进程读取你原本就能访问的本地文件。请勿将本地服务向公网开放，也不要在 Issue、截图或讨论中公开原始私人 JSONL 和登录信息。
+
+索引文件位于用户主目录：
+
+~~~text
+~/.codex-usage-view/
+├── prices.json
+└── usage-index-v1-<本地目录哈希>.json
+~~~
+
+这些都是**本机文件**，不是 GitHub 仓库内容。删除索引后只会触发重新扫描，不会影响 Codex 原日志。详细威胁边界请查看 [SECURITY.md](SECURITY.md)。
+
+## 技术架构
+
+~~~mermaid
+flowchart LR
+    A["Codex 本地 JSONL 日志"] --> B["流式 JSONL 解析器"]
+    B --> C["会话/模型/日期用量摘要"]
+    C <--> D["本地增量索引"]
+    C --> E["API 等效费用计算"]
+    F["内置 / 手动模型费率"] --> E
+    G["可选公开价格同步"] --> F
+    E --> H["127.0.0.1 本地 HTTP 服务"]
+    H --> I["浏览器仪表盘 / CSV 导出"]
+~~~
+
+核心模块：
+
+~~~text
+src/
+├── core.mjs             # 会话解析、Token 聚合和成本计算
+├── jsonl-reader.mjs      # 流式 JSONL 分行读取
+├── usage-index.mjs       # 本地派生统计和增量检查点
+├── pricing.mjs           # 内置模型费率、可选价格同步、手动覆盖
+├── server.mjs            # 仅监听 loopback 的本地 HTTP 服务
+└── web/
+    ├── index.html
+    ├── styles.css
+    └── app.js            # 总览、项目下钻、图表、导出
+test/                     # 核心逻辑、超大日志、HTTP 和 UI 测试
+start_windows.cmd         # Windows 一键启动
+start_private.cmd         # Windows 隐藏标题模式
+~~~
+
+### 运行测试
+
+~~~bash
+npm run check
+npm test
+~~~
+
+仓库包含 GitHub Actions CI。自动测试使用人工合成的会话数据，包括超过旧版 48 MiB 阈值的日志、追加续读、文件改写后重建索引、模型价格、项目下钻以及本地 HTTP 访问控制。**不需要提交真实用户日志才能参与测试。**
+
+## 常见问题
+
+<details>
+<summary>Q：更新代码后依然没有统计到某些会话？</summary>
+
+确认 Codex 的实际 `CODEX_HOME` 和 `sessions/` 路径。当前版本只读取 `.jsonl`，不解析 `.jsonl.zst`。如果日志中没有 Token 事件，也无法推算丢失的 Token。
+
+</details>
+
+<details>
+<summary>Q：我使用 ChatGPT Pro，为什么显示美元成本？</summary>
+
+这是**如果按 API 文本 Token 单价计费时的等效估算**，不是会员账单，软件不会从你的 ChatGPT 订阅中扣费，也无法推导订阅余额。
+
+</details>
+
+<details>
+<summary>Q：为什么有的对话标题像是提示词的一部分？</summary>
+
+软件默认从本地日志取第一条可识别用户消息前 110 字用作标题。想禁用这项功能，请使用 `--hide-titles`（或 Windows 的 `start_private.cmd`）。
+
+</details>
+
+<details>
+<summary>Q：为什么有扫描提醒？</summary>
+
+不完整或损坏的 JSON 行、超过 32 MiB 的单行、无法访问的文件等会产生提醒。这不表示 Codex 会话损坏，但可能造成部分用量缺失。
+
+</details>
+
+<details>
+<summary>Q：能不能用于多 Agent / 长期项目？</summary>
+
+可以统计各个独立 JSONL 会话，包括很大的 Agent 运行日志。但当前还没有完整的**父子 Agent 关系树**；若子 Agent 各自使用独立日志，会作为独立会话统计。
+
+</details>
+
+<details>
+<summary>Q：如何更新？</summary>
+
+Git 安装：停止旧进程，执行 `git pull origin main` 后重新 `npm start`。ZIP 安装：重新下载仓库最新代码并解压。
+
+</details>
+
+## 已知限制与路线图
+
+- [ ] 支持 `.jsonl.zst` 压缩归档
+- [ ] 改进 Codex 父子 Agent 关联与成本归属
+- [ ] 针对持续运行中的日志强化并发写入/索引一致性
+- [ ] 更丰富的模型价格验证和价格版本记录
+- [ ] 发布经过构建、测试和签名的原生 Windows 安装包
+- [ ] 增加可选的深色主题与多语言界面
+
+当前版本为 **v0.3.0（早期版本）**。功能和日志兼容性仍在持续完善，不建议把估算数据作为正式的财务账单使用。
+
+## 参与贡献
+
+欢迎提交 Issue、Pull Request、文档修正和安全审计。请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。提交问题时请提供**匿名化的最小可复现 JSONL 样例**，不要直接上传私人对话、API Key、Token 或原始项目源码。
+
+## 开源协议与致谢
+
+Copyright © 2026 **Jia-Moo** · [MIT License](LICENSE)。
+
+Codex Usage View 是独立实现的社区工具，与 OpenAI 没有关联或官方背书。OpenAI、ChatGPT、Codex 及相关名称归其各自权利人所有。
+
+感谢开源生态中的 [Node.js](https://nodejs.org/)、[LiteLLM](https://github.com/BerriAI/litellm)，以及帮助发现超大日志兼容问题的测试反馈。

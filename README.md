@@ -79,7 +79,7 @@ Windows 显式指定：
 
 ### Token 差分逻辑
 
-读取 Codex 的 event_msg.token_count.info.total_token_usage 累计快照，逐次求非负差分；累计相同的快照不会重复计数。若计数器发生下降，视为开启新段。若缺少累计快照，则尽力使用 last_token_usage。模型归属取对应 turn_context 中的 model。
+读取 Codex 的 event_msg.token_count.info.total_token_usage 累计快照，逐次求非负差分；累计相同的快照不会重复计数。若计数器发生下降，视为开启新段；有 last_token_usage 时优先使用其单次用量并依靠累计值去重。若缺少累计快照，则尽力使用 last_token_usage。模型归属取对应 turn_context 中的 model。
 
 Codex 日志格式会随版本更新而变化。如果本机日志没有 token_count 或模型信息，本工具无法推断丢失的数据。
 

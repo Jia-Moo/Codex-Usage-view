@@ -107,7 +107,10 @@ export async function parseSession(filePath, { showTitles = false } = {}) {
       const last = normalizeUsage(p.info.last_token_usage);
       let delta = null;
       if (current) {
-        delta = deltaFrom(previous, current);
+        // last_token_usage is the per-call figure emitted by Codex itself.
+        // The total snapshot protects against duplicate log events.
+        const unchanged = previous && METRICS.every(k => previous[k] === current[k]);
+        delta = unchanged ? ZERO() : (last || deltaFrom(previous, current));
         previous = current;
       } else if (last) {
         // Legacy snapshots can omit totals. This is best-effort and indicated in docs.
@@ -115,7 +118,8 @@ export async function parseSession(filePath, { showTitles = false } = {}) {
         previous = null;
       }
       if (!delta || totalTokens(delta) === 0) continue;
-      const model = typeof p.info.model === "string" && p.info.model || activeModel;
+      const model = [p.info.model, p.model, p.info.model_name, p.info.modelName, activeModel]
+        .find(value => typeof value === "string" && value.length) || "未知模型";
       const date = dayOf(timestamp || summary.started);
       if (!date) { summary.warnings++; continue; }
       const key = JSON.stringify([model, date]);

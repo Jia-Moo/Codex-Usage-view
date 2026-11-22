@@ -14,13 +14,16 @@ export const defaultPriceFile = () => join(homedir(), ".codex-usage-view", "pric
 export async function loadPrices(file = defaultPriceFile()) {
   try {
     const obj = JSON.parse(await readFile(file, "utf8"));
+    const base = cleanPrices(obj.models || {});
+    const overrides = cleanPrices(obj.overrides || {});
     return {
       source: obj.source || "manual",
       updatedAt: obj.updatedAt || null,
-      models: cleanPrices(obj.models || {}),
+      models: { ...base, ...overrides },
+      overrides,
     };
   } catch (error) {
-    if (error.code === "ENOENT") return { source: "尚未同步", updatedAt: null, models: {} };
+    if (error.code === "ENOENT") return { source: "尚未同步", updatedAt: null, models: {}, overrides: {} };
     throw error;
   }
 }
@@ -52,9 +55,15 @@ export async function saveManualPrice(model, rates, file = defaultPriceFile()) {
   const cleaned = cleanPrices({ [model.trim()]: rates });
   if (!cleaned[model.trim()]) throw new Error("费率无效（单位 USD / 100 万 Token）");
   const current = await loadPrices(file);
-  const data = { source: "LiteLLM + 手动覆盖", updatedAt: new Date().toISOString(), models: { ...current.models, ...cleaned } };
+  const overrides = { ...(current.overrides || {}), ...cleaned };
+  const data = {
+    source: current.source + " + 手动覆盖",
+    updatedAt: new Date().toISOString(),
+    models: current.models,
+    overrides,
+  };
   await persistPrices(data, file);
-  return data;
+  return { ...data, models: { ...current.models, ...overrides } };
 }
 export async function syncPrices(file = defaultPriceFile()) {
   const controller = new AbortController();
@@ -85,8 +94,9 @@ export async function syncPrices(file = defaultPriceFile()) {
   }
   if (!Object.keys(models).length) throw new Error("未解析到 OpenAI 模型价格");
   const previous = await loadPrices(file);
-  // Explicit manual edits are re-applied after syncing through an independent file in later releases.
-  const data = { source: "LiteLLM (GitHub)", updatedAt: new Date().toISOString(), models };
+  // Keep user-specified overrides across refreshes; imported prices stay separate.
+  const overrides = previous.overrides || {};
+  const data = { source: "LiteLLM (GitHub)", updatedAt: new Date().toISOString(), models, overrides };
   await persistPrices(data, file);
-  return { ...data, count: Object.keys(models).length, previousSource: previous.source };
+  return { ...data, models: { ...models, ...overrides }, count: Object.keys(models).length, previousSource: previous.source };
 }

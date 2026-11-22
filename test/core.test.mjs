@@ -124,3 +124,36 @@ test("remote price sync only requests static LiteLLM URL; no auth or local data 
     assert.equal(sent[0].init.headers.Authorization, undefined);
   } finally { globalThis.fetch = before; }
 }));
+
+test("prefers per-call tokens when provided and deduplicates equal cumulative snapshots", () => sandbox(async root => {
+  const file = join(root, "last.jsonl");
+  const record = (ts, total, last) => row(ts, "event_msg", { type: "token_count", info: { total_token_usage: total, last_token_usage: last, model: "gpt-z" } });
+  const total = { input_tokens: 300, cached_input_tokens: 100, output_tokens: 60 };
+  const last = { input_tokens: 80, cached_input_tokens: 40, output_tokens: 10 };
+  await writeFile(file, [
+    row(time, "turn_context", { model: "gpt-z" }),
+    record(time, total, last),
+    record(time, total, last),
+  ].join("\n"));
+  const session = await parseSession(file);
+  assert.equal(session.usage.input, 80);
+  assert.equal(session.usage.cached, 40);
+  assert.equal(session.usage.output, 10);
+}));
+
+test("manual price overrides survive a subsequent remote sync", () => sandbox(async root => {
+  const file = join(root, "prices.json");
+  await saveManualPrice("gpt-manual", { inputPerMillion: 3, cachedPerMillion: 2, outputPerMillion: 7 }, file);
+  const before = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, headers: new Headers(), text: async () => JSON.stringify({
+    "gpt-manual": { litellm_provider: "openai", input_cost_per_token: 0.000001, output_cost_per_token: 0.000004 },
+    "gpt-other": { litellm_provider: "openai", input_cost_per_token: 0.000002, output_cost_per_token: 0.000005 },
+  }) });
+  try {
+    const result = await syncPrices(file);
+    assert.equal(result.models["gpt-manual"].inputPerMillion, 3);
+    assert.equal(result.models["gpt-other"].inputPerMillion, 2);
+    const loaded = await loadPrices(file);
+    assert.equal(loaded.models["gpt-manual"].cachedPerMillion, 2);
+  } finally { globalThis.fetch = before; }
+}));

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, utimes, readFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSession, scanCodex, normalizeUsage, calculateCost, priceReport } from "../src/core.mjs";
-import { cleanPrices, loadPrices, saveManualPrice, syncPrices } from "../src/pricing.mjs";
+import { BUILTIN_PRICES, cleanPrices, loadPrices, saveManualPrice, syncPrices } from "../src/pricing.mjs";
 
 function row(timestamp, type, payload) { return JSON.stringify({ timestamp, type, payload }); }
 const time = "2026-11-22T10:00:00.000Z";
@@ -156,4 +156,63 @@ test("manual price overrides survive a subsequent remote sync", () => sandbox(as
     const loaded = await loadPrices(file);
     assert.equal(loaded.models["gpt-manual"].cachedPerMillion, 2);
   } finally { globalThis.fetch = before; }
+}));
+
+
+test("official OpenAI Standard prices are available offline on first run", () => sandbox(async root => {
+  const file = join(root, "fresh", "prices.json");
+  const prices = await loadPrices(file);
+  assert.equal(prices.source, "OpenAI 官方内置价格");
+  assert.equal(prices.updatedAt, null);
+  assert.equal(prices.models["gpt-6.2-sol"].inputPerMillion, 2);
+  assert.equal(prices.models["gpt-6.2-sol"].cachedPerMillion, 0.10);
+  assert.equal(prices.models["gpt-6.1-terra"].outputPerMillion, 5);
+  assert.equal(prices.models["gpt-5.3-codex"].outputPerMillion, 14);
+  assert.equal(prices.models["gpt-6-luna"].cachedPerMillion, 0.01);
+  assert.equal(BUILTIN_PRICES["gpt-6.2-astra"].outputPerMillion, 40);
+}));
+
+test("real offline costs are nonzero and never infer a price for unknown models", () => sandbox(async root => {
+  const prices = (await loadPrices(join(root, "nonexistent.json"))).models;
+  const usage = { input: 1_000_000, cached: 800_000, output: 100_000, reasoning: 50_000 };
+  const cost = calculateCost(usage, "openai/gpt-6.2-sol", prices);
+  assert.equal(cost.known, true);
+  assert.equal(cost.usd, 1.48); // .2M * $2 + .8M * $0.10 + .1M * $10
+  assert.equal(cost.savedUSD, 1.52);
+  const unpriced = calculateCost(usage, "gpt-unknown-private-alias", prices);
+  assert.equal(unpriced.known, false);
+  assert.equal(unpriced.usd, null);
+}));
+
+test("manual overrides take priority over bundled official and synced prices", () => sandbox(async root => {
+  const file = join(root, "prices.json");
+  await saveManualPrice("gpt-6.2-sol", { inputPerMillion: 7, cachedPerMillion: 0.7, outputPerMillion: 21 }, file);
+  const custom = await loadPrices(file);
+  assert.equal(custom.models["gpt-6.2-sol"].inputPerMillion, 7);
+  const before = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true, headers: new Headers(),
+    text: async () => JSON.stringify({ "gpt-6.2-sol": {
+      litellm_provider: "openai", input_cost_per_token: 0.000004, cache_read_input_token_cost: 0.000002, output_cost_per_token: 0.00002
+    } }),
+  });
+  try {
+    await syncPrices(file);
+    const latest = await loadPrices(file);
+    assert.equal(latest.models["gpt-6.2-sol"].inputPerMillion, 7);
+    assert.equal(latest.models["gpt-6.2-sol"].cachedPerMillion, 0.7);
+  } finally { globalThis.fetch = before; }
+}));
+
+test("verified official pricing outranks stale third-party rates", () => sandbox(async root => {
+  const file = join(root, "prices.json");
+  await writeFile(file, JSON.stringify({
+    models: {
+      "gpt-6.1-terra": { inputPerMillion: 0.01, cachedPerMillion: 0.001, outputPerMillion: 0.02 },
+      "gpt-unlisted-test": { inputPerMillion: 2, cachedPerMillion: 0.5, outputPerMillion: 8 },
+    }
+  }));
+  const data = await loadPrices(file);
+  assert.equal(data.models["gpt-6.1-terra"].inputPerMillion, 1);
+  assert.equal(data.models["gpt-unlisted-test"].inputPerMillion, 2);
 }));

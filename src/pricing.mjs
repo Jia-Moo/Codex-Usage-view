@@ -6,24 +6,57 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { priceForModel } from "./core.mjs";
 
 const PRICING_SOURCE = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
+/**
+ * Verified OpenAI Standard text-token API rates (USD per million tokens),
+ * checked 2026-11-22. Exact model IDs only; no invented prices for unknown aliases.
+ * Source: https://developers.openai.com/api/docs/pricing
+ * Individual references:
+ * https://developers.openai.com/api/docs/models/gpt-5.1-codex
+ * https://developers.openai.com/api/docs/models/gpt-5.2-codex
+ * https://developers.openai.com/api/docs/models/gpt-5.3-codex
+ * https://developers.openai.com/api/docs/models/gpt-6.1-sol
+ * https://developers.openai.com/api/docs/models/gpt-6.1-terra
+ * https://developers.openai.com/api/docs/models/gpt-6-luna
+ * https://developers.openai.com/api/docs/models/gpt-6.2-sol
+ * https://developers.openai.com/api/docs/models/gpt-6.2-astra
+ */
+export const BUILTIN_PRICES = Object.freeze({
+  "gpt-5.1-codex": { inputPerMillion: 1.25, cachedPerMillion: 0.125, outputPerMillion: 10 },
+  "gpt-5.2-codex": { inputPerMillion: 1.75, cachedPerMillion: 0.175, outputPerMillion: 14 },
+  "gpt-5.3-codex": { inputPerMillion: 1.75, cachedPerMillion: 0.175, outputPerMillion: 14 },
+  "gpt-6.1-sol": { inputPerMillion: 2, cachedPerMillion: 0.10, outputPerMillion: 10 },
+  "gpt-6.1-terra": { inputPerMillion: 1, cachedPerMillion: 0.05, outputPerMillion: 5 },
+  "gpt-6-luna": { inputPerMillion: 0.10, cachedPerMillion: 0.01, outputPerMillion: 0.50 },
+  "gpt-6.2-sol": { inputPerMillion: 2, cachedPerMillion: 0.10, outputPerMillion: 10 },
+  "gpt-6.2-astra": { inputPerMillion: 8, cachedPerMillion: 0.40, outputPerMillion: 40 },
+});
+
+function composeCatalog(saved = {}) {
+  const syncedModels = cleanPrices(saved.models || {});
+  const overrides = cleanPrices(saved.overrides || {});
+  // Third-party pricing fills gaps; verified official Standard rates take priority.
+  // User manual overrides are always highest priority.
+  const models = { ...syncedModels, ...BUILTIN_PRICES, ...overrides };
+  const hasSync = Object.keys(syncedModels).length > 0;
+  return {
+    source: hasSync ? "OpenAI 官方内置 + LiteLLM" : "OpenAI 官方内置价格",
+    updatedAt: saved.updatedAt || null,
+    officialCheckedAt: "2026-11-22",
+    models, syncedModels, overrides,
+  };
+}
+
 export const defaultPriceFile = () => join(homedir(), ".codex-usage-view", "prices.json");
 
 export async function loadPrices(file = defaultPriceFile()) {
   try {
     const obj = JSON.parse(await readFile(file, "utf8"));
-    const base = cleanPrices(obj.models || {});
-    const overrides = cleanPrices(obj.overrides || {});
-    return {
-      source: obj.source || "manual",
-      updatedAt: obj.updatedAt || null,
-      models: { ...base, ...overrides },
-      overrides,
-    };
+    return composeCatalog(obj);
   } catch (error) {
-    if (error.code === "ENOENT") return { source: "尚未同步", updatedAt: null, models: {}, overrides: {} };
+    if (error.code === "ENOENT") return composeCatalog();
     throw error;
   }
 }
@@ -57,13 +90,12 @@ export async function saveManualPrice(model, rates, file = defaultPriceFile()) {
   const current = await loadPrices(file);
   const overrides = { ...(current.overrides || {}), ...cleaned };
   const data = {
-    source: current.source + " + 手动覆盖",
     updatedAt: new Date().toISOString(),
-    models: current.models,
+    models: current.syncedModels,
     overrides,
   };
   await persistPrices(data, file);
-  return { ...data, models: { ...current.models, ...overrides } };
+  return composeCatalog(data);
 }
 export async function syncPrices(file = defaultPriceFile()) {
   const controller = new AbortController();
@@ -96,7 +128,7 @@ export async function syncPrices(file = defaultPriceFile()) {
   const previous = await loadPrices(file);
   // Keep user-specified overrides across refreshes; imported prices stay separate.
   const overrides = previous.overrides || {};
-  const data = { source: "LiteLLM (GitHub)", updatedAt: new Date().toISOString(), models, overrides };
+  const data = { updatedAt: new Date().toISOString(), models, overrides };
   await persistPrices(data, file);
-  return { ...data, models: { ...models, ...overrides }, count: Object.keys(models).length, previousSource: previous.source };
+  return { ...composeCatalog(data), count: Object.keys(models).length, previousSource: previous.source };
 }

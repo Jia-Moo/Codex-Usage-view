@@ -1,6 +1,6 @@
 const token = document.querySelector('meta[name="local-token"]').content;
 const $ = id => document.getElementById(id);
-const state = { report: null, prices: null, page: "overview", days: "30", project: "all", model: "all", search: "", selected: null, loading: false };
+const state = { report: null, prices: null, page: "overview", days: "30", project: "all", model: "all", search: "", projectDetail: null, loading: false };
 const heading = { overview: "使用情况总览", projects: "项目分析", models: "模型分析", sessions: "会话明细", pricing: "API 等效价格" };
 const fields = ["input", "cached", "output", "reasoning"];
 
@@ -18,7 +18,14 @@ function short(n) {
   if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
   return fmt(n);
 }
-function money(n) { return "$" + Number(n || 0).toFixed(Number(n || 0) < 0.1 ? 5 : 3); }
+function money(n) {
+  const value = Number(n || 0);
+  if (!Number.isFinite(value)) return "—";
+  if (value === 0) return "$0.00";
+  if (value < 0.00000001) return "<$0.00000001";
+  const digits = value >= 1 ? 3 : value >= 0.01 ? 4 : value >= 0.0001 ? 6 : 8;
+  return "$" + value.toFixed(digits);
+}
 function percent(n) { return (100 * Number(n || 0)).toFixed(1) + "%"; }
 function localDate(date) {
   const d = new Date(date), pad = n => String(n).padStart(2, "0");
@@ -78,6 +85,7 @@ function filtered() {
   for (const session of state.report?.sessions || []) {
     if (state.project !== "all" && session.projectPath !== state.project) continue;
     if (search && ![session.title, session.project, session.projectPath, session.id, ...session.buckets.map(b => b.model)].some(s => String(s || "").toLowerCase().includes(search))) continue;
+    if (state.page === "projects" && state.projectDetail && (session.projectPath || "未知项目") !== state.projectDetail) continue;
     for (const bucket of session.buckets) {
       if (start && bucket.date < start) continue;
       if (state.model !== "all" && state.model !== bucket.model) continue;
@@ -100,7 +108,8 @@ function metric(label, value, hint, tone) {
   return '<div class="metric"><div class="label">' + escapeHTML(label) + '</div><div class="value ' + (tone || "") + '">' + escapeHTML(value) + '</div><div class="hint">' + escapeHTML(hint) + "</div></div>";
 }
 function priceText(agg) {
-  return money(agg.usd) + (agg.missing ? " *" : "");
+  if (!agg.priced && agg.missing) return "未定价";
+  return (agg.missing ? "≥ " : "") + money(agg.usd);
 }
 function renderMetrics(rows) {
   const a = aggregate(rows);
@@ -108,8 +117,8 @@ function renderMetrics(rows) {
   $("metrics").innerHTML = [
     metric("总 Token 消耗", short(count(a.usage)), fmt(a.usage.input) + " 输入 · " + fmt(a.usage.output) + " 输出", "accent"),
     metric("输入缓存命中率", percent(a.usage.input ? a.usage.cached / a.usage.input : 0), fmt(a.usage.cached) + " 缓存 · " + fmt(uncached) + " 非缓存", "aqua"),
-    metric("API 等效成本", priceText(a), a.missing ? a.missing + " 组模型用量未计价" : "覆盖全部已检测到的模型", "green"),
-    metric("缓存节省成本", money(a.savedUSD), fmt(a.sessions) + " 个会话 · 推理输出 " + fmt(a.usage.reasoning), "amber"),
+    metric("API 等效成本", priceText(a), a.missing ? "有 " + a.missing + " 组未定价；已知成本仅为下限" : "按 Standard API 单价估算 · 非实际账单", "green"),
+    metric("缓存节省成本", a.priced ? (a.missing ? "≥ " : "") + money(a.savedUSD) : (a.missing ? "未定价" : "$0.00"), fmt(a.sessions) + " 个会话 · 推理输出 " + fmt(a.usage.reasoning), "amber"),
   ].join("");
 }
 function table(headers, body) {
@@ -160,7 +169,7 @@ function cachePanel(rows) {
     '<div class="stat-row"><span>非缓存输入 Token</span><span class="num">' + fmt(Math.max(0, u.input - u.cached)) + '</span></div>' +
     '<div class="stat-row"><span>输出 Token（含推理）</span><span class="num">' + fmt(u.output) + '</span></div>' +
     '<div class="stat-row"><span>其中 Reasoning Token</span><span class="num">' + fmt(u.reasoning) + '</span></div>' +
-    '<div class="stat-row"><span>缓存节省（API 等效）</span><span class="num highlight">' + money(a.savedUSD) + (a.missing ? " *" : "") + '</span></div>';
+    '<div class="stat-row"><span>缓存节省（API 等效）</span><span class="num highlight">' + (a.priced ? (a.missing ? "≥ " : "") + money(a.savedUSD) : "未定价") + '</span></div>';
 }
 function renderOverview(rows) {
   const popular = grouped(rows, r => r.model).slice(0, 6);
@@ -168,7 +177,7 @@ function renderOverview(rows) {
     section("Token 使用趋势", "按本地日历日期汇总，展示最近最多 24 个有用量的日期", barChart(rows)) +
     section("缓存效率", "缓存输入仍计入总输入，但通常具有更低的 API 单价", cachePanel(rows)) +
     "</div>" +
-    section("主要模型", "按 Token 用量排序；* 表示存在缺失价格", table(defaultColumns(), popular.map(g =>
+    section("主要模型", "按 Token 用量排序。费用显示“≥”说明部分模型未定价", table(defaultColumns(), popular.map(g =>
       '<tr><td class="primary-cell"><span class="chip">' + escapeHTML(g.key) + "</span></td>" + metricCellsRich(g) + "</tr>").join(""))) +
     renderSessionTable(rows, 8);
   return html;
@@ -177,12 +186,39 @@ function renderProjectTable(rows) {
   const groups = grouped(rows, r => r.session.projectPath || "未知项目");
   const body = groups.map(g => {
     const s = g.rows[0].session;
-    return '<tr><td class="primary-cell">' + escapeHTML(s.project) +
+    return '<tr><td class="primary-cell"><button type="button" class="project-link" data-project-open="' + escapeHTML(g.key) + '">' +
+      '<span>' + escapeHTML(s.project) + '</span><span aria-hidden="true" class="project-arrow">↗</span></button>' +
       '<div class="secondary-cell" title="' + escapeHTML(g.key) + '">' + escapeHTML(g.key) +
-      '</div><div class="secondary-cell">' + fmt(g.sessions) + " 个会话</div></td>" + metricCellsRich(g) + "</tr>";
+      '</div><div class="secondary-cell">' + fmt(g.sessions) + " 个会话 · " + fmt(g.rows.length) + " 个用量记录</div></td>" + metricCellsRich(g) + "</tr>";
   }).join("");
-  return section("项目成本与 Token", "统计按 Codex 日志记录的工作目录（cwd）分组，同名不同路径不会混淆", table(defaultColumns(), body));
+  return section("项目清单", "点击项目名称，查看该项目各个模型的 Token、缓存命中率及 API 等效成本", table(defaultColumns(), body));
 }
+function renderProjectDetail(rows) {
+  const first = rows[0]?.session;
+  const name = first?.project || state.projectDetail?.split(/[\\/]/).pop() || "未知项目";
+  const total = aggregate(rows);
+  const groups = grouped(rows, r => r.model);
+  const tokenTotal = Math.max(1, count(total.usage));
+  const breakdown = groups.map(g => {
+    const share = 100 * count(g.usage) / tokenTotal;
+    return '<tr><td class="primary-cell"><span class="chip">' + escapeHTML(g.key) +
+      '</span><div class="secondary-cell">' + fmt(g.sessions) + ' 个会话</div></td>' +
+      metricCellsRich(g) +
+      '<td class="num"><div class="ratio"><span>' + share.toFixed(1) + '%</span><div class="progress tiny"><div class="progress-fill" style="width:' + share.toFixed(2) + '%"></div></div></div></td></tr>';
+  }).join("");
+  const heading = '<div class="breadcrumb"><button type="button" class="back-link" data-project-back="1">← 返回项目列表</button>' +
+    '<span>/</span><strong>' + escapeHTML(name) + '</strong></div>' +
+    '<div class="project-heading"><div><h2>' + escapeHTML(name) + '</h2>' +
+    '<div class="codeish">' + escapeHTML(state.projectDetail) + '</div></div>' +
+    '<div class="project-summary"><span>' + fmt(groups.length) + ' 个模型</span><span>' + fmt(total.sessions) + ' 个会话</span><strong>' +
+    escapeHTML(priceText(total)) + '</strong></div></div>';
+  return heading +
+    section("模型消耗明细", "本项目按模型分组的真实 Token 数据；点击下方会话可继续查看单个对话", table(
+      [...defaultColumns(), { text: "Token 占比", right: true }], breakdown)) +
+    renderDateTable(rows) +
+    renderSessionTable(rows);
+}
+
 function renderModelTable(rows) {
   const groups = grouped(rows, r => r.model);
   return section("模型使用情况", "输入缓存、非缓存输入和输出分开计价", table(defaultColumns(),
@@ -210,16 +246,26 @@ function renderPricing(rows) {
   const rates = state.prices?.models || {};
   const options = models.map(m => '<option value="' + escapeHTML(m) + '">' + escapeHTML(m) + "</option>").join("");
   const current = models.map(model => {
-    const rate = rates[model] || rates["openai/" + model];
+    const key = model.toLowerCase().trim().replace(/^openai[/.]/, "");
+    const rate = rates[model] || rates[key] || rates["openai/" + key];
     const cells = rate
       ? numTd(money(rate.inputPerMillion)) + numTd(money(rate.cachedPerMillion)) + numTd(money(rate.outputPerMillion))
       : '<td colspan="3" class="price-unknown">未定价（不计入成本估算）</td>';
     return '<tr><td class="primary-cell"><span class="chip">' + escapeHTML(model) + "</span></td>" + cells + "</tr>";
   }).join("");
-  const source = "价格来源：" + (state.prices?.source || "尚未同步") + " · 更新于：" + (state.prices?.updatedAt ? new Date(state.prices.updatedAt).toLocaleString("zh-CN") : "从未同步");
+  const missing = models.filter(model => {
+    const key = model.toLowerCase().trim().replace(/^openai[/.]/, "");
+    return !rates[model] && !rates[key] && !rates["openai/" + key];
+  });
+  const source = "费用基于 OpenAI 官方 Standard API 单价 · 内置价格核对于 " + (state.prices?.officialCheckedAt || "2026-11-22") +
+    " · " + (state.prices?.source || "官方内置") + (state.prices?.updatedAt ? " · 外部同步于 " + new Date(state.prices.updatedAt).toLocaleString("zh-CN") : "");
+  const warning = missing.length
+    ? '<div class="notice inline-notice"><strong>' + missing.length + ' 个模型没有对应价格</strong><p>无法给这些模型计算等效成本：' +
+      missing.map(escapeHTML).join('、') + '。可尝试同步或在下方手动指定其 API 费率。</p></div>'
+    : '<p class="helper">当前日志中的模型均有可用价格；若使用了非 Standard 计费档位，请手动调整。</p>';
   return section("同步公开 API 单价", source,
-      '<p class="helper">只有点击下面的按钮后，才会向 GitHub 的 LiteLLM 公共定价 JSON 发起请求。不会携带任何 Codex 会话、提示词、项目路径或认证信息。价格是估算来源，必要时请以 OpenAI 官方定价页面为准。</p>' +
-      '<button id="sync-prices" class="button primary" type="button">↻ 同步最新公开价格</button>') +
+      warning + '<p class="helper">内置模型价格无需联网即可估算。点击同步会从 LiteLLM 获取缺失模型的价格，不发送 Codex 日志、项目路径或认证数据。官方内置价格优先于第三方目录；手动设置优先于两者。<a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">查看官方 API 价格</a></p>' +
+      '<button id="sync-prices" class="button primary" type="button">同步其他模型价格</button>') +
     section("手动覆盖模型价格", "单位 USD / 100 万 Token。手动保存只写入用户目录中的 prices.json。",
       '<form id="price-form" class="form-grid"><label>模型<input class="form-input" list="model-prices" name="model" placeholder="例如 gpt-5.1-codex" required><datalist id="model-prices">' + options +
       '</datalist></label><label>普通输入<input class="form-input" type="number" name="input" min="0" step="any" required></label>' +
@@ -230,7 +276,7 @@ function renderPricing(rows) {
       [{ text: "模型" }, { text: "普通输入 / M", right: true }, { text: "缓存输入 / M", right: true }, { text: "输出 / M", right: true }], current));
 }
 function render() {
-  $("page-title").textContent = heading[state.page];
+  $("page-title").textContent = state.page === "projects" && state.projectDetail ? "项目明细" : heading[state.page];
   document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === state.page));
   if (!state.report) return;
   const rows = filtered();
@@ -239,12 +285,13 @@ function render() {
   renderMetrics(rows);
   let html;
   if (state.page === "overview") html = renderOverview(rows);
-  else if (state.page === "projects") html = renderProjectTable(rows) + renderDateTable(rows);
+  else if (state.page === "projects") html = state.projectDetail ? renderProjectDetail(rows) : renderProjectTable(rows) + renderDateTable(rows);
   else if (state.page === "models") html = renderModelTable(rows) + renderDateTable(rows);
   else if (state.page === "sessions") html = renderSessionTable(rows);
   else html = renderPricing(rows);
   if (!rows.length && state.page !== "pricing") {
-    html = '<div class="panel empty"><strong>当前筛选范围没有日志用量</strong>请检查 Codex 会话目录、日期和模型筛选。打开 Codex 进行一次对话后，点击“刷新日志”即可重新扫描。</div>';
+    html = (state.page === "projects" && state.projectDetail ? '<div class="breadcrumb"><button type="button" class="back-link" data-project-back="1">← 返回项目列表</button></div>' : "") +
+      '<div class="panel empty"><strong>当前筛选范围没有日志用量</strong>请检查 Codex 会话目录、日期和模型筛选。</div>';
   }
   $("content").innerHTML = html;
   if (state.page === "pricing") wirePricing();
@@ -309,7 +356,11 @@ function downloadCSV() {
   a.href = url; a.download = "codex-usage-" + localDate(new Date()) + ".csv"; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
-document.querySelectorAll("[data-page]").forEach(button => button.addEventListener("click", () => { state.page = button.dataset.page; render(); }));
+document.querySelectorAll("[data-page]").forEach(button => button.addEventListener("click", () => {
+  state.page = button.dataset.page;
+  state.projectDetail = null;
+  render();
+}));
 $("days").addEventListener("change", e => { state.days = e.target.value; render(); });
 $("project").addEventListener("change", e => { state.project = e.target.value; render(); });
 $("model").addEventListener("change", e => { state.model = e.target.value; render(); });
@@ -318,6 +369,20 @@ $("refresh").addEventListener("click", () => loadReport(true));
 $("export").addEventListener("click", downloadCSV);
 $("close-details").addEventListener("click", () => $("details").close());
 $("content").addEventListener("click", e => {
+  const project = e.target.closest("[data-project-open]");
+  if (project) {
+    state.page = "projects";
+    state.projectDetail = project.dataset.projectOpen;
+    render();
+    window.scrollTo({ top: 0, behavior: "instant" });
+    return;
+  }
+  if (e.target.closest("[data-project-back]")) {
+    state.projectDetail = null;
+    render();
+    window.scrollTo({ top: 0, behavior: "instant" });
+    return;
+  }
   const row = e.target.closest("[data-session]");
   if (row) showSession(row.dataset.session);
 });

@@ -188,10 +188,9 @@ export async function scanCodex(root, { showTitles = false, maxFiles = 60000, ma
 
 export function priceForModel(model, prices) {
   if (!isObj(prices)) return null;
-  const candidates = [
-    model, model.replace(/^openai\//, ""),
-    "openai/" + model.replace(/^openai\//, ""),
-  ];
+  const key = String(model || "").trim().toLowerCase();
+  const clean = key.replace(/^openai[/.]/, "");
+  const candidates = [key, clean, "openai/" + clean];
   for (const name of candidates) {
     const p = prices[name];
     if (p && [p.inputPerMillion, p.cachedPerMillion, p.outputPerMillion].every(v => typeof v === "number" && Number.isFinite(v) && v >= 0)) return p;

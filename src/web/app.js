@@ -281,7 +281,10 @@ function render() {
   if (!state.report) return;
   const rows = filtered();
   const active = aggregate(rows);
-  $("subtitle").textContent = fmt(active.sessions) + " 个会话 · " + fmt(rows.length) + " 组模型/日期用量 · 仅本机数据";
+  const meta = state.report.meta || {};
+  $("subtitle").textContent = fmt(active.sessions) + " 个会话 · " + fmt(rows.length) +
+    " 组模型/日期用量 · 本次扫描：" + fmt(meta.fullScans || 0) + " 完整，" +
+    fmt(meta.resumedFiles || 0) + " 续读，" + fmt(meta.cacheHits || 0) + " 缓存";
   renderMetrics(rows);
   let html;
   if (state.page === "overview") html = renderOverview(rows);

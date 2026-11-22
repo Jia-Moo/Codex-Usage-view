@@ -1,0 +1,17 @@
+{
+  "name": "codex-usage-view",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private, local-first Codex conversation and token usage dashboard",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test",
+    "start:private": "node src/server.mjs --hide-titles",
+    "check": "node --check src/server.mjs && node --check src/core.mjs && node --check src/pricing.mjs && node --check src/web/app.js"
+  },
+  "license": "MIT"
+}

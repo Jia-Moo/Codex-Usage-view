@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="local-token" content="__LOCAL_TOKEN__">
+  <meta name="color-scheme" content="dark">
+  <title>Codex Usage View · 本地用量分析</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" type="module" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-icon">◈</span>
+        <div><strong>Codex Usage</strong><small>VIEW / LOCAL ANALYTICS</small></div>
+      </div>
+      <div class="nav-label">工作台</div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-page="overview"><span class="nav-glyph">◫</span> 总览</button>
+        <button class="nav-item" data-page="projects"><span class="nav-glyph">⌗</span> 项目分析</button>
+        <button class="nav-item" data-page="models"><span class="nav-glyph">◈</span> 模型分析</button>
+        <button class="nav-item" data-page="sessions"><span class="nav-glyph">≡</span> 会话明细</button>
+        <button class="nav-item" data-page="pricing"><span class="nav-glyph">＄</span> API 价格</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="private-note"><span class="status-led"></span> 本机私有分析</div>
+        <p>仅解析本地 Codex 会话日志，不读取 auth.json，不上传会话记录。</p>
+        <small>Open source · MIT · v0.1.0</small>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">ACTIVITY INTELLIGENCE</span>
+          <h1 id="page-title">使用情况总览</h1>
+          <div id="subtitle" class="muted">读取本地会话中…</div>
+        </div>
+        <div class="top-actions">
+          <span class="small-mark" id="refresh-stamp">尚未刷新</span>
+          <button id="refresh" class="button ghost" type="button">↻ 刷新日志</button>
+          <button id="export" class="button primary" type="button">↓ 导出 CSV</button>
+        </div>
+      </header>
+      <section class="filterbar" aria-label="筛选条件">
+        <label>时间范围<select id="days"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近 365 天</option><option value="all">全部时间</option></select></label>
+        <label>项目<select id="project"><option value="all">所有项目</option></select></label>
+        <label>模型<select id="model"><option value="all">所有模型</option></select></label>
+        <label class="search-control">搜索会话 / 项目<input id="search" type="search" placeholder="项目名、模型或对话标题" autocomplete="off"></label>
+      </section>
+      <div id="notice" class="notice hidden" role="status"></div>
+      <section id="metrics" class="metrics" aria-label="核心指标"></section>
+      <section id="content" class="view"></section>
+      <footer class="footer">成本是按公开 API 单价计算的等效估算，不代表 ChatGPT 会员实际扣费。Reasoning Token 已计入输出 Token，不重复计算。</footer>
+    </main>
+  </div>
+  <dialog id="details" class="detail-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">SESSION INSPECTOR</span><h2 id="details-title">会话详情</h2></div><button class="icon-button" id="close-details" aria-label="关闭">✕</button></div>
+    <div id="details-body"></div>
+  </dialog>
+</body>
+</html>

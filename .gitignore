@@ -155,3 +155,37 @@ vite.config.ts.timestamp-*
 .nx/cache
 .nx/workspace-data
 .nx/migrate-runs
+
+
+# ------------------------------------------------------------
+# Codex Usage View: local session data and credentials
+# NEVER commit real Codex logs, local usage indexes or secrets.
+# Git ignore rules do not remove files already tracked in Git.
+# ------------------------------------------------------------
+
+# Raw Codex conversation logs (may contain prompts, source code, tool output)
+*.jsonl
+*.jsonl.zst
+*.jsonl.gz
+
+# Local Codex account/session roots and this app's local statistics
+.codex/
+.codex-usage-view/
+usage-index-v1-*.json
+
+# Authentication, export and local credential files
+auth.json
+credentials.json
+secrets.json
+token.json
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa
+id_ed25519
+
+# Local persistent databases
+*.sqlite
+*.sqlite3
+*.db

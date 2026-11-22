@@ -36,6 +36,8 @@
 
 4. 浏览器自动打开本地界面。按 Ctrl+C 停止本机服务。
 
+**Windows 还可直接双击根目录的 start_windows.cmd 启动**，或双击 start_private.cmd 使用隐藏标题模式（仍需预先安装 Node.js 22+）。
+
 无需执行 npm install。
 
 ### 自定义日志位置

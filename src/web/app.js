@@ -293,7 +293,8 @@ function stackedTrend(data, metric) {
   if (isCost && max === 0 && missing) {
     return '<div class="empty"><strong>无法计算等效费用</strong>所选范围的模型缺少价格。可在「API 价格」中设置或同步费率。</div>';
   }
-  const width = Math.max(650, buckets.length * (data.granularity === "hour" ? 38 : 46));
+  // Compact columns fit both charts side by side on desktop; narrower screens can scroll.
+  const width = Math.max(360, buckets.length * (data.granularity === "hour" ? 19 : 22));
   const columns = buckets.map((bucket, index) => {
     const value = isCost ? bucket.usd : bucket.tokens;
     const height = max > 0 ? value / max * 100 : 0;
@@ -308,7 +309,11 @@ function stackedTrend(data, metric) {
       }).join("");
     const totalLabel = periodLabel(bucket.key, data.granularity) + " · " +
       (isCost ? money(bucket.usd) : fmt(bucket.tokens) + " Token");
-    const xLabel = data.granularity === "hour" && index % 2 !== 0 ? "" : periodLabel(bucket.key, data.granularity);
+    // Dense hourly and daily data: label meaningful intervals, retaining full titles on hover.
+    const stride = data.granularity === "hour" ? 4
+      : buckets.length > 24 ? 5 : buckets.length > 14 ? 3 : 1;
+    const xLabel = index % stride === 0 || index === buckets.length - 1
+      ? periodLabel(bucket.key, data.granularity) : "";
     return '<div class="trend-col" title="' + escapeHTML(totalLabel) + '" role="group" aria-label="' + escapeHTML(totalLabel) +
       '"><div class="trend-plot"><div class="trend-stack" style="height:' + height.toFixed(4) + '%">' +
       segments + '</div></div><div class="trend-label">' + escapeHTML(xLabel) + "</div></div>";
@@ -321,17 +326,43 @@ function stackedTrend(data, metric) {
     ' 按模型堆叠趋势图，可横向滚动"><div class="trend-bars" style="min-width:' + width + 'px">' +
     columns + "</div></div>" + note + "</div>";
 }
-function modelLegend(data, rows) {
-  const totals = grouped(rows, r => r.model);
-  if (!totals.length) return "";
-  const total = Math.max(1, totals.reduce((sum, r) => sum + count(r.usage), 0));
-  return '<div class="model-legend" aria-label="模型颜色图例">' + totals
-    .sort((a, b) => count(b.usage) - count(a.usage))
-    .map(row => '<span class="model-legend-item"><i class="model-swatch" style="background:' +
-      colorForModel(row.key) + '"></i><span>' + escapeHTML(row.key) + '</span><span class="legend-percent">' +
-      (count(row.usage) / total * 100).toFixed(1) + '%</span>' +
-      (row.missing ? '<span class="legend-missing">未完整计价</span>' : '') + '</span>')
-    .join("") + "</div>";
+function modelLegend(data, rows, metric) {
+  const groups = grouped(rows, r => r.model).sort((a, b) => count(b.usage) - count(a.usage));
+  if (!groups.length) return '<span class="trend-legend-empty">暂无模型</span>';
+  const isCost = metric === "usd";
+  const grandTotal = Math.max(0, groups.reduce((sum, group) =>
+    sum + (isCost ? group.usd : count(group.usage)), 0));
+  function item(group) {
+    const value = isCost ? group.usd : count(group.usage);
+    const share = grandTotal > 0 && (value > 0 || !isCost)
+      ? (100 * value / grandTotal).toFixed(1) + "%" : "—";
+    const status = isCost && group.missing && !group.priced ? "未定价" : share;
+    const tooltip = group.key + " · " + (isCost
+      ? (group.priced ? money(group.usd) + (group.missing ? " · 部分未定价" : "") : "未定价")
+      : fmt(value) + " Token") + " · " + status;
+    return '<span class="trend-legend-item" title="' + escapeHTML(tooltip) + '">' +
+      '<i class="model-swatch" style="background:' + colorForModel(group.key) + '"></i>' +
+      '<span class="trend-legend-name">' + escapeHTML(group.key) + '</span>' +
+      '<span class="trend-legend-share' + (status === "未定价" ? " unpriced" : "") +
+      '">' + escapeHTML(status) + '</span></span>';
+  }
+  const visible = groups.slice(0, 6).map(item).join("");
+  const extra = groups.length > 6
+    ? '<details class="trend-legend-more"><summary>还有 ' + (groups.length - 6) +
+      ' 个模型</summary><div class="trend-legend-popover">' +
+      groups.slice(6).map(item).join("") + '</div></details>' : "";
+  return '<div class="trend-legend" aria-label="' +
+    (isCost ? "费用" : "Token") + ' 模型颜色说明">' +
+    '<div class="trend-legend-heading">模型颜色说明 <span>· ' +
+    (isCost ? "费用占比" : "Token 占比") + '</span></div>' +
+    '<div class="trend-legend-grid">' + visible + '</div>' + extra + '</div>';
+}
+function trendPanel(title, caption, data, rows, metric) {
+  return '<section class="panel trend-panel">' +
+    '<div class="trend-panel-header"><div class="trend-panel-heading">' +
+    '<h2>' + escapeHTML(title) + '</h2><p class="caption">' +
+    escapeHTML(caption) + '</p></div>' + modelLegend(data, rows, metric) +
+    '</div>' + stackedTrend(data, metric) + '</section>';
 }
 function hourlyDetail(data) {
   if (!data.singleDay) return "";
@@ -367,22 +398,20 @@ function cachePanel(rows) {
 function renderOverview(rows) {
   const popular = grouped(rows, r => r.model).slice(0, 6);
   const data = timeline(rows);
-  const label = data.granularity === "hour" ? "逐小时（00:00–23:00）"
+  const label = data.granularity === "hour" ? "逐小时 · 00:00–23:00"
     : data.granularity === "day" ? "逐日" : data.granularity === "week" ? "按周" : "按月";
   const html =
-    section("Token 使用趋势", label + " · 每个色块代表一个模型的 Token 使用量，色块高度表示其占比",
-      stackedTrend(data, "tokens")) +
-    section("API 等效费用趋势", label + " · 使用当前模型价格分别计算缓存输入、非缓存输入和输出",
-      stackedTrend(data, "usd")) +
-    section("模型颜色说明", "两张图的模型颜色保持一致；百分比表示所选范围内的 Token 占比",
-      modelLegend(data, rows)) +
+    '<div class="trend-dual">' +
+      trendPanel("Token 使用趋势", label + " · 按模型堆叠", data, rows, "tokens") +
+      trendPanel("API 等效费用趋势", label + " · 按模型堆叠 · USD", data, rows, "usd") +
+    '</div>' +
     hourlyDetail(data) +
     '<div class="split">' +
       section("缓存效率", "缓存输入仍计入总输入，但通常具有更低的 API 单价", cachePanel(rows)) +
-      section("趋势图说明", "悬停在各模型色块上查看该时间段的数值与比例",
-        '<p class="helper">选择「今天」或将自定义开始和结束日期设成同一天，图表显示 24 个小时。选择多日范围时自动按日、周或月展示，以覆盖完整区间。</p>' +
-        '<p class="helper">颜色表示模型，Token 图按总 Token 堆叠，费用图按已定价的 API 等效美元金额堆叠。推理 Token 已包含在输出中，不重复计算。</p>') +
-    "</div>" +
+      section("趋势图说明", "模型颜色直接标在每张图右上角，悬停柱内色块可查看具体数值",
+        '<p class="helper">选择「今天」或自定义单日时，两张图显示 24 小时数据；多日范围按日、周或月聚合。</p>' +
+        '<p class="helper">左图按 Token 总量堆叠，右图按已定价的 API 等效费用堆叠。因此两张图同一模型的占比可能不同；未定价费用不会当成零。</p>') +
+    '</div>' +
     section("主要模型", "按 Token 用量排序。费用显示“≥”说明部分模型未定价", table(defaultColumns(), popular.map(g =>
       '<tr><td class="primary-cell"><span class="chip">' + escapeHTML(g.key) + "</span></td>" + metricCellsRich(g) + "</tr>").join(""))) +
     renderSessionTable(rows, 8);

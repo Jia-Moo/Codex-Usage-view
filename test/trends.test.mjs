@@ -157,3 +157,49 @@ test("empty single-day selection keeps the 24-hour chart and detail table visibl
   assert.match(els.content.innerHTML, /API 等效费用趋势/);
   assert.doesNotMatch(els.content.innerHTML, /当前筛选范围没有日志用量/);
 });
+
+
+test("dashboard places two charts in one layout, each with an upper-right model legend", async () => {
+  const { els, context } = await boot();
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  const html = els.content.innerHTML;
+  const trendStart = html.indexOf('class="trend-dual"');
+  const firstTitle = html.indexOf("Token 使用趋势", trendStart);
+  const firstLegend = html.indexOf('class="trend-legend"', firstTitle);
+  const costTitle = html.indexOf("API 等效费用趋势", firstLegend);
+  const secondLegend = html.indexOf('class="trend-legend"', costTitle);
+  assert.ok(trendStart >= 0, "charts should be in a shared trend-dual layout");
+  assert.ok(firstTitle > trendStart && firstLegend > firstTitle);
+  assert.ok(costTitle > firstLegend && secondLegend > costTitle);
+  assert.equal((html.match(/class="trend-panel-header"/g) || []).length, 2);
+  assert.equal((html.match(/class="trend-legend"/g) || []).length, 2);
+  assert.equal((html.match(/class="trend-chart"/g) || []).length, 2);
+  assert.ok(!html.includes("<h2>模型颜色说明</h2>"), "no standalone oversized legend section");
+  assert.match(html, /Token 占比/);
+  assert.match(html, /费用占比/);
+  assert.match(html, /model-a/);
+  assert.match(html, /model-b/);
+  assert.match(html, /model-c/);
+  const left = html.slice(firstLegend, costTitle);
+  const right = html.slice(secondLegend, html.indexOf("逐小时明细"));
+  const swatchA = runInContext('colorForModel("model-a")', context);
+  assert.ok(left.includes(swatchA) && right.includes(swatchA),
+    "same model must share identical colors on both cards");
+  assert.match(right, /未定价/, "unpriced model must be labeled in the cost legend");
+});
+
+test("model legends remain readable with many models and do not expand the chart header indefinitely", async () => {
+  const { context } = await boot();
+  const data = Array.from({ length: 10 }, (_, i) => ({
+    model: "model-" + i,
+    date: localDate(new Date()),
+    session: { id: "many-" + i },
+    usage: { input: 1000 + i, cached: 300, output: 50, reasoning: 0 },
+    pricing: { known: true, usd: 0.001 * (i + 1), savedUSD: 0 },
+  }));
+  context.values = data;
+  const markup = runInContext("modelLegend(null, values, 'tokens')", context);
+  assert.equal((markup.match(/class="trend-legend-item"/g) || []).length, 10);
+  assert.match(markup, /class="trend-legend-more"/);
+  assert.match(markup, /还有 4 个模型/);
+});

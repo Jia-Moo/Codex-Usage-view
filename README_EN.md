@@ -38,7 +38,7 @@ Codex Usage View answers these questions by parsing the logs already stored on y
 | Large JSONL logs | Streaming reader, no blanket 48 MiB file-size cutoff |
 | Incremental index | Reuse unchanged file summaries, resume append-only logs and reparse changed/truncated ones |
 | Export | Local CSV export suitable for Excel |
-| Usage and cost trends | Two model-stacked color charts with consistent legend and hourly breakdown for a single day |
+| Usage and cost trends | Side-by-side model-stacked Token/cost charts with individual top-right legends and hourly detail |
 | Local-first UI | Simple browser dashboard served from `127.0.0.1`; no frontend build toolchain |
 
 ## Quick start
@@ -84,6 +84,15 @@ node src/server.mjs --hide-titles
 ~~~
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
+
+## v0.5.1: Side-by-side trends and compact in-card legends
+
+- **Side-by-side on desktop:** Token usage is shown on the left and API-equivalent cost on the right, enabling direct comparison without vertical scrolling.
+- **Legend in the top-right of each card:** Every chart has its own compact model legend with color swatches, model names (hover for full names when truncated), and percentages. The old standalone legend card is removed.
+- **Clear share denominators:** The token chart shows each model's share of selected tokens; the cost chart shows its share of **known API-equivalent cost**. Model colors are identical across charts. Models with no usable price show **unpriced**, not an invented zero-cost percentage.
+- **Compact at six or more models:** The legend displays up to six models directly in two columns and offers an expandable **N more models** list when needed.
+- **Responsive:** The two charts stack vertically on narrower screens, with their legends remaining inside each panel. Dense hourly bars can still scroll horizontally.
+- **Presentation-only update:** Token accounting, day/hour aggregation, and equivalent-cost calculations are unchanged.
 
 ## v0.5.0: Model-stacked usage and cost trends, with hourly detail
 
@@ -205,7 +214,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.5.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.5.1 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

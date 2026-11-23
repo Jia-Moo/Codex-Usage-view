@@ -12,11 +12,11 @@ Local-first, read-only Codex token analytics. Track usage, cache hit rates, proj
 
 ## 一段话介绍（中文）
 
-**Codex Usage View** 是一款面向 OpenAI Codex App 与 Codex CLI 用户的开源本地用量分析工具。它直接读取电脑上的 JSONL 会话日志，将输入 Token、缓存输入、输出及推理 Token 按项目、模型、日期与单独会话汇总，并结合公开 API 单价估算成本和缓存节省。项目采用 Node.js 标准库实现，提供清爽的浏览器仪表盘、按模型着色的 Token/费用双趋势图、单日逐小时明细、CSV 导出、超大日志流式读取和本地增量索引。不需要 API Key，也不接管 Codex 登录；仅在用户主动请求时联网获取公开模型定价。
+**Codex Usage View** 是一款面向 OpenAI Codex App 与 Codex CLI 用户的开源本地用量分析工具。它直接读取电脑上的 JSONL 会话日志，将输入 Token、缓存输入、输出及推理 Token 按项目、模型、日期与单独会话汇总，并结合公开 API 单价估算成本和缓存节省。项目采用 Node.js 标准库实现，提供清爽的浏览器仪表盘、左右并排且图内自带模型颜色说明的 Token/费用双趋势图、单日逐小时明细、CSV 导出、超大日志流式读取和本地增量索引。不需要 API Key，也不接管 Codex 登录；仅在用户主动请求时联网获取公开模型定价。
 
 ## One-paragraph description (English)
 
-**Codex Usage View** is an open-source, local-first usage dashboard for Codex App and Codex CLI. It reads locally stored JSONL sessions, summarizes input, cached input, output and reasoning tokens by project, model, date and individual conversation, and estimates API-equivalent costs and cache savings. Built with Node.js standard modules, it includes a clean browser dashboard, color-coded stacked token and API-cost trends, hourly detail for single-day ranges, CSV export, streaming support for large logs and an incremental local index. No account credentials or hosted backend are required; optional public price sync is opt-in.
+**Codex Usage View** is an open-source, local-first usage dashboard for Codex App and Codex CLI. It reads locally stored JSONL sessions, summarizes input, cached input, output and reasoning tokens by project, model, date and individual conversation, and estimates API-equivalent costs and cache savings. Built with Node.js standard modules, it includes a clean browser dashboard, side-by-side color-coded stacked token and API-cost trends with in-card legends, hourly detail for single-day ranges, CSV export, streaming support for large logs and an incremental local index. No account credentials or hosted backend are required; optional public price sync is opt-in.
 
 ## GitHub Topics（可直接添加）
 

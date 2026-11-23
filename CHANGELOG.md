@@ -2,6 +2,18 @@
 
 All notable changes are documented here. Versions follow the version in `package.json`.
 
+## [0.5.1] — 2026-11-23
+
+### Changed / 布局改进
+
+- Place the two usage trends **side by side** on desktop (Token on the left, API-equivalent cost on the right).
+- Move the model color guide to the **top-right inside each chart card**, replacing the oversized separate legend card.
+- Use compact two-column legend labels with model color, name and metric-specific percentage.
+- Preserve the same model colors across charts while distinguishing Token share from known-cost share.
+- Provide expandable additional-model entries and responsive one-column layout on smaller displays.
+- Reduce horizontal chart padding and unnecessary hour labels to improve side-by-side readability.
+- Updated Chinese/English READMEs and layout regression tests; no token-accounting or pricing changes.
+
 ## [0.5.0] — 2026-11-23
 
 ### Added / 新增

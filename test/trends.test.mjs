@@ -145,3 +145,15 @@ test("unpriced-only model costs explain missing prices instead of displaying fak
   assert.match(tokenHTML, /data-model="model-c"/);
   assert.doesNotMatch(tokenHTML, /data-model="model-a"/);
 });
+
+
+test("empty single-day selection keeps the 24-hour chart and detail table visible", async () => {
+  const { els, context } = await boot();
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  els.search.callbacks.get("input")({ target: { value: "no-such-conversation" } });
+  assert.equal(runInContext("filtered().length", context), 0);
+  assert.equal(runInContext("timeline(filtered()).buckets.length", context), 24);
+  assert.match(els.content.innerHTML, /逐小时明细/);
+  assert.match(els.content.innerHTML, /API 等效费用趋势/);
+  assert.doesNotMatch(els.content.innerHTML, /当前筛选范围没有日志用量/);
+});

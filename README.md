@@ -3,7 +3,7 @@
 **A local-first, read-only usage analytics dashboard for OpenAI Codex.**  
 **本地运行的 Codex Token 用量分析工具——知道每个项目、模型和对话用了多少 Token，以及按 API 价格估算的等效成本。**
 
-[English documentation](README_EN.md) · [安全与隐私](SECURITY.md) · [参与贡献](CONTRIBUTING.md) · [MIT License](LICENSE)
+[English documentation](README_EN.md) · [更新日志](CHANGELOG.md) · [安全与隐私](SECURITY.md) · [参与贡献](CONTRIBUTING.md) · [MIT License](LICENSE)
 
 ![Tests](https://github.com/Jia-Moo/Codex-Usage-view/actions/workflows/ci.yml/badge.svg)
 

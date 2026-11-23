@@ -500,7 +500,10 @@ function render() {
   else if (state.page === "models") html = renderModelTable(rows) + renderDateTable(rows);
   else if (state.page === "sessions") html = renderSessionTable(rows);
   else html = renderPricing(rows);
-  if (!rows.length && state.page !== "pricing") {
+  const bounds = dateBounds();
+  const showEmptySingleDay = state.page === "overview" && !bounds.invalid &&
+    bounds.start && bounds.start === bounds.end;
+  if (!rows.length && state.page !== "pricing" && !showEmptySingleDay) {
     html = (state.page === "projects" && state.projectDetail ? '<div class="breadcrumb"><button type="button" class="back-link" data-project-back="1">← 返回项目列表</button></div>' : "") +
       '<div class="panel empty"><strong>' + (dateBounds().invalid ? "日期范围无效" : "当前筛选范围没有日志用量") +
       '</strong>' + (dateBounds().invalid ? escapeHTML(dateBounds().message) : "请检查 Codex 会话目录、日期和模型筛选。") + '</div>';

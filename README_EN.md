@@ -2,7 +2,7 @@
 
 **A local-first, read-only token usage analytics dashboard for OpenAI Codex.**
 
-[简体中文](README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
+[简体中文](README.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
 
 ![Tests](https://github.com/Jia-Moo/Codex-Usage-view/actions/workflows/ci.yml/badge.svg)
 

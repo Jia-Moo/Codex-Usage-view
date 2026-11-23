@@ -85,6 +85,16 @@ node src/server.mjs --hide-titles
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
 
+## v0.5.3: Show the latest timeline periods by default
+
+- **Latest first on entry:** both the Token usage and API-equivalent cost charts automatically scroll to their respective **rightmost positions** when the overview first opens.
+- **Independent scroll positions:** each chart is positioned according to its own content width.
+- **Respect manual history browsing:** after dragging a chart back to earlier dates or hours, an automatic refresh preserves that chart's position. A chart that was already at the right edge follows newly appended data.
+- **Reset on filter or navigation changes:** date range, project, model, and search changes default back to the latest period, as does re-entering the overview page.
+- **No-overflow behavior:** a chart narrower than its viewport remains at scroll offset zero.
+
+This is a frontend-only change: **no updates to token accounting, cost formulas, local logs, or derived-index schemas**.
+
 ## v0.5.2: Interactive model segments and rich hover inspector
 
 - **Tactile hover**: chart segments subtly enlarge, brighten and cast a soft shadow when hovered; the animation respects the operating system's reduced-motion preference.
@@ -225,7 +235,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.5.2 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.5.3 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

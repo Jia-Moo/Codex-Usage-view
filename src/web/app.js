@@ -1,6 +1,6 @@
 const token = document.querySelector('meta[name="local-token"]').content;
 const $ = id => document.getElementById(id);
-const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, modelColors: new Map(), trendData: null, trendActiveModel: null, activeTrendTarget: null, pinnedTrendElement: null, loading: false };
+const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, modelColors: new Map(), trendData: null, trendActiveModel: null, activeTrendTarget: null, pinnedTrendElement: null, trendScrollKey: null, loading: false };
 const heading = { overview: "使用情况总览", projects: "项目分析", models: "模型分析", sessions: "会话明细", pricing: "API 等效价格" };
 const fields = ["input", "cached", "output", "reasoning"];
 
@@ -326,7 +326,7 @@ function stackedTrend(data, metric) {
     ? '<p class="trend-warning">部分模型未定价：图中费用只包含有明确价格的模型，不能视为总费用。</p>' : "";
   const scale = max ? (isCost ? money(max) : short(max) + " Token") : (isCost ? "$0.00" : "0 Token");
   return '<div class="trend-chart"><div class="trend-scale">最高单个时间段：' + escapeHTML(scale) + '</div>' +
-    '<div class="trend-scroll" tabindex="0" aria-label="' + (isCost ? "API 等效成本" : "Token") +
+    '<div class="trend-scroll" data-metric="' + metric + '" tabindex="0" aria-label="' + (isCost ? "API 等效成本" : "Token") +
     ' 按模型堆叠趋势图，可横向滚动"><div class="trend-bars" style="min-width:' + width + 'px">' +
     columns + "</div></div>" + note + "</div>";
 }
@@ -647,7 +647,48 @@ function renderPricing(rows) {
     section("已检测模型的单价表", "该表仅包含从本地会话日志中检测到的模型", table(
       [{ text: "模型" }, { text: "普通输入 / M", right: true }, { text: "缓存输入 / M", right: true }, { text: "输出 / M", right: true }], current));
 }
+// Trend charts show the latest (rightmost) period when first displayed.
+// If a refresh happens while the user is exploring older data, retain each
+// chart's manual position; keep following the latest only when already at end.
+function trendViewKey() {
+  return JSON.stringify([
+    state.days, state.customStart, state.customEnd,
+    state.project, state.model, state.search,
+  ]);
+}
+function trendScrollElements() {
+  return [...($("content").querySelectorAll?.(".trend-scroll") || [])];
+}
+function snapshotTrendScroll(key) {
+  if (state.trendScrollKey !== key) return null;
+  const positions = new Map();
+  for (const element of trendScrollElements()) {
+    const end = Math.max(0, element.scrollWidth - element.clientWidth);
+    positions.set(element.dataset.metric, {
+      left: element.scrollLeft,
+      atEnd: end - element.scrollLeft <= 12,
+    });
+  }
+  return positions;
+}
+function restoreTrendScroll(key, positions) {
+  if (state.page !== "overview") {
+    state.trendScrollKey = null;
+    return;
+  }
+  state.trendScrollKey = key;
+  for (const element of trendScrollElements()) {
+    const max = Math.max(0, element.scrollWidth - element.clientWidth);
+    const previous = positions?.get(element.dataset.metric);
+    element.scrollLeft = previous && !previous.atEnd
+      ? Math.max(0, Math.min(previous.left, max))
+      : max;
+  }
+}
+
 function render() {
+  const scrollKey = trendViewKey();
+  const previousScroll = state.page === "overview" ? snapshotTrendScroll(scrollKey) : null;
   $("page-title").textContent = state.page === "projects" && state.projectDetail ? "项目明细" : heading[state.page];
   document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === state.page));
   syncDateControls();
@@ -675,6 +716,7 @@ function render() {
       '</strong>' + (dateBounds().invalid ? escapeHTML(dateBounds().message) : "请检查 Codex 会话目录、日期和模型筛选。") + '</div>';
   }
   $("content").innerHTML = html;
+  restoreTrendScroll(scrollKey, previousScroll);
   if (state.page === "pricing") wirePricing();
 }
 function showSession(id) {

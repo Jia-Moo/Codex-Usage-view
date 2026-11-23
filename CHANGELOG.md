@@ -2,6 +2,16 @@
 
 All notable changes are documented here. Versions follow the version in `package.json`.
 
+## [0.5.3] — 2026-11-23
+
+### Changed / 优化
+
+- Both usage and API cost charts start horizontally scrolled to the rightmost (newest) time period.
+- Preserve manually selected historical positions during automatic refresh; charts already at the right edge continue following new data.
+- Reset both charts to newest on filter changes or when returning to the overview.
+- Added regression tests for independent chart positioning, refresh behavior, and non-overflow cases.
+- No new dependencies, network behavior, or local index migration.
+
 ## [0.5.2] — 2026-11-23
 
 ### Added / 新增

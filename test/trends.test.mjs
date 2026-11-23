@@ -301,3 +301,55 @@ test("the same model is highlighted from its legend, and rich tooltip escapes mo
   assert.match(tooltip, /&lt;img/);
   assert.doesNotMatch(tooltip, /<img src=x/);
 });
+
+
+test("both chart scrollbars start at the rightmost (latest) period", async () => {
+  const { els, context } = await boot();
+  const scrolls = [
+    { dataset: { metric: "tokens" }, scrollWidth: 1200, clientWidth: 420, scrollLeft: 0 },
+    { dataset: { metric: "usd" }, scrollWidth: 1050, clientWidth: 420, scrollLeft: 0 },
+  ];
+  els.content.querySelectorAll = selector => selector === ".trend-scroll" ? scrolls : [];
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  assert.equal(scrolls[0].scrollLeft, 780);
+  assert.equal(scrolls[1].scrollLeft, 630);
+  assert.match(els.content.innerHTML, /data-metric="tokens"/);
+  assert.match(els.content.innerHTML, /data-metric="usd"/);
+});
+
+test("background rerenders keep manual history positions while right-aligned charts follow the latest", async () => {
+  const { els, context } = await boot();
+  const scrolls = [
+    { dataset: { metric: "tokens" }, scrollWidth: 1200, clientWidth: 400, scrollLeft: 0 },
+    { dataset: { metric: "usd" }, scrollWidth: 1000, clientWidth: 400, scrollLeft: 0 },
+  ];
+  els.content.querySelectorAll = selector => selector === ".trend-scroll" ? scrolls : [];
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  assert.equal(scrolls[0].scrollLeft, 800);
+  assert.equal(scrolls[1].scrollLeft, 600);
+
+  // The user drags only Token back; the other chart remains docked to latest.
+  scrolls[0].scrollLeft = 180;
+  scrolls[0].scrollWidth = 1280;
+  scrolls[1].scrollWidth = 1160;
+  runInContext("render()", context);
+  assert.equal(scrolls[0].scrollLeft, 180, "manual history exploration must not jump forward");
+  assert.equal(scrolls[1].scrollLeft, 760, "latest-aligned cost chart follows newly appended data");
+
+  // Switching range resets both chart scrollbars to the most recent period.
+  els.days.callbacks.get("change")({ target: { value: "7" } });
+  assert.equal(scrolls[0].scrollLeft, 880);
+  assert.equal(scrolls[1].scrollLeft, 760);
+
+  // Non-overflow charts have no negative scroll positions.
+  scrolls[0].scrollWidth = 320;
+  scrolls[0].clientWidth = 400;
+  els.days.callbacks.get("change")({ target: { value: "30" } });
+  assert.equal(scrolls[0].scrollLeft, 0);
+
+  // Navigating away and back establishes a fresh latest-first chart view.
+  scrolls[1].scrollLeft = 0;
+  runInContext('state.page = "models"; render()', context);
+  runInContext('state.page = "overview"; render()', context);
+  assert.equal(scrolls[1].scrollLeft, 760);
+});

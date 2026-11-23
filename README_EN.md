@@ -89,7 +89,7 @@ If Codex CLI, Codex App, and/or WSL use different data directories, point the sc
 
 - **Tactile hover**: chart segments subtly enlarge, brighten and cast a soft shadow when hovered; the animation respects the operating system's reduced-motion preference.
 - **Linked highlighting**: hovering a chart segment or its in-card legend highlights the same model across both Token and API-cost charts, dimming unrelated models.
-- **Follow-the-pointer inspector**: replaces the native one-line \`title\` tooltip with a floating detailed card that flips/clamps near viewport edges and is not clipped by horizontally scrolling charts.
+- **Follow-the-pointer inspector**: replaces the native one-line `title` tooltip with a floating detailed card that flips/clamps near viewport edges and is not clipped by horizontally scrolling charts.
 - **Detailed metrics**: full model name, local time period, metric value, share of the current period, input, cached/uncached input, output, reasoning output, cache hit rate, API-equivalent cost and estimated savings.
 - **Correct intra-model navigation**: moving between different hours of the same model updates the inspector immediately.
 - **Keyboard/touch support**: segments can receive Tab focus; click/tap pins the card and another click or Escape dismisses it.

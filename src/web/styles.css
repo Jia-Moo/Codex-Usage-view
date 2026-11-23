@@ -443,8 +443,7 @@ a:hover{color:#172e25}
   transform-origin:50% 50%;
   transition:transform .19s cubic-bezier(.18,.82,.28,1),
     box-shadow .19s ease, filter .19s ease, opacity .19s ease;
-  will-change:transform;
-}
+ }
 .trend-segment::after{
   content:"";position:absolute;inset:-3px 0;pointer-events:auto;
 }

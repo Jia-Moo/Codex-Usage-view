@@ -1,6 +1,6 @@
 const token = document.querySelector('meta[name="local-token"]').content;
 const $ = id => document.getElementById(id);
-const state = { report: null, prices: null, page: "overview", days: "30", project: "all", model: "all", search: "", projectDetail: null, loading: false };
+const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, loading: false };
 const heading = { overview: "使用情况总览", projects: "项目分析", models: "模型分析", sessions: "会话明细", pricing: "API 等效价格" };
 const fields = ["input", "cached", "output", "reasoning"];
 
@@ -31,10 +31,48 @@ function localDate(date) {
   const d = new Date(date), pad = n => String(n).padStart(2, "0");
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 }
-function beginning() {
-  if (state.days === "all") return "";
-  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - Number(state.days) + 1);
-  return localDate(d);
+function shiftLocalDays(offset) {
+  // Use local calendar arithmetic at noon to avoid DST midnight transitions.
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + offset);
+  return localDate(date);
+}
+function validLocalDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const check = new Date(year, month - 1, day, 12);
+  return check.getFullYear() === year && check.getMonth() + 1 === month && check.getDate() === day;
+}
+function dateBounds() {
+  if (state.days === "all") return { start: "", end: "" };
+  if (state.days === "today") {
+    const today = localDate(new Date());
+    return { start: today, end: today };
+  }
+  if (state.days === "custom") {
+    if (!validLocalDate(state.customStart) || !validLocalDate(state.customEnd)) {
+      return { invalid: true, message: "请选择有效的开始日期和结束日期。" };
+    }
+    if (state.customStart > state.customEnd) {
+      return { invalid: true, message: "开始日期不能晚于结束日期。" };
+    }
+    return { start: state.customStart, end: state.customEnd };
+  }
+  const days = Number(state.days);
+  if (!Number.isInteger(days) || days < 1) return { invalid: true, message: "时间范围无效。" };
+  return { start: shiftLocalDays(1 - days), end: localDate(new Date()) };
+}
+function syncDateControls() {
+  const custom = state.days === "custom";
+  $("custom-range").classList.toggle("hidden", !custom);
+  $("date-start").value = state.customStart;
+  $("date-end").value = state.customEnd;
+  const bounds = dateBounds();
+  const hint = $("range-hint");
+  hint.textContent = bounds.invalid ? bounds.message : "包含起止两天，按计算机本地日期统计。";
+  hint.classList.toggle("invalid", !!bounds.invalid);
+  $("export").disabled = !!bounds.invalid;
 }
 function notify(message, error = false) {
   const el = $("notice");
@@ -81,13 +119,15 @@ function fillFilters() {
 }
 
 function filtered() {
-  const rows = [], start = beginning(), search = state.search.toLowerCase();
+  const rows = [], bounds = dateBounds(), search = state.search.toLowerCase();
+  if (bounds.invalid) return rows;
   for (const session of state.report?.sessions || []) {
     if (state.project !== "all" && session.projectPath !== state.project) continue;
     if (search && ![session.title, session.project, session.projectPath, session.id, ...session.buckets.map(b => b.model)].some(s => String(s || "").toLowerCase().includes(search))) continue;
     if (state.page === "projects" && state.projectDetail && (session.projectPath || "未知项目") !== state.projectDetail) continue;
     for (const bucket of session.buckets) {
-      if (start && bucket.date < start) continue;
+      if ((bounds.start && bucket.date < bounds.start) ||
+          (bounds.end && bucket.date > bounds.end)) continue;
       if (state.model !== "all" && state.model !== bucket.model) continue;
       rows.push({ ...bucket, session });
     }
@@ -278,6 +318,7 @@ function renderPricing(rows) {
 function render() {
   $("page-title").textContent = state.page === "projects" && state.projectDetail ? "项目明细" : heading[state.page];
   document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === state.page));
+  syncDateControls();
   if (!state.report) return;
   const rows = filtered();
   const active = aggregate(rows);
@@ -294,7 +335,8 @@ function render() {
   else html = renderPricing(rows);
   if (!rows.length && state.page !== "pricing") {
     html = (state.page === "projects" && state.projectDetail ? '<div class="breadcrumb"><button type="button" class="back-link" data-project-back="1">← 返回项目列表</button></div>' : "") +
-      '<div class="panel empty"><strong>当前筛选范围没有日志用量</strong>请检查 Codex 会话目录、日期和模型筛选。</div>';
+      '<div class="panel empty"><strong>' + (dateBounds().invalid ? "日期范围无效" : "当前筛选范围没有日志用量") +
+      '</strong>' + (dateBounds().invalid ? escapeHTML(dateBounds().message) : "请检查 Codex 会话目录、日期和模型筛选。") + '</div>';
   }
   $("content").innerHTML = html;
   if (state.page === "pricing") wirePricing();
@@ -364,7 +406,17 @@ document.querySelectorAll("[data-page]").forEach(button => button.addEventListen
   state.projectDetail = null;
   render();
 }));
-$("days").addEventListener("change", e => { state.days = e.target.value; render(); });
+$("days").addEventListener("change", e => {
+  state.days = e.target.value;
+  if (state.days === "custom" && !state.customStart && !state.customEnd) {
+    state.customStart = shiftLocalDays(-29);
+    state.customEnd = localDate(new Date());
+  }
+  render();
+});
+for (const [id, key] of [["date-start", "customStart"], ["date-end", "customEnd"]]) {
+  $("" + id).addEventListener("change", e => { state[key] = e.target.value; render(); });
+}
 $("project").addEventListener("change", e => { state.project = e.target.value; render(); });
 $("model").addEventListener("change", e => { state.model = e.target.value; render(); });
 $("search").addEventListener("input", e => { state.search = e.target.value.trim(); render(); });

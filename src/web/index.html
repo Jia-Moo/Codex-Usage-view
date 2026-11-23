@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="local-token" content="__LOCAL_TOKEN__">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light">
   <title>Codex Usage View · 本地用量分析</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" type="module" defer></script>
@@ -27,7 +27,7 @@
       <div class="sidebar-foot">
         <div class="private-note"><span class="status-led"></span> 本机私有分析</div>
         <p>仅解析本地 Codex 会话日志，不读取 auth.json，不上传会话记录。</p>
-        <small>Open source · MIT · v0.3.0</small>
+        <small>Open source · MIT · v0.4.0</small>
       </div>
     </aside>
     <main class="main">
@@ -44,10 +44,16 @@
         </div>
       </header>
       <section class="filterbar" aria-label="筛选条件">
-        <label>时间范围<select id="days"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近 365 天</option><option value="all">全部时间</option></select></label>
+        <label>时间范围<select id="days"><option value="today">今天</option><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近 365 天</option><option value="all">全部时间</option><option value="custom">自定义时间范围</option></select></label>
         <label>项目<select id="project"><option value="all">所有项目</option></select></label>
         <label>模型<select id="model"><option value="all">所有模型</option></select></label>
         <label class="search-control">搜索会话 / 项目<input id="search" type="search" placeholder="项目名、模型或对话标题" autocomplete="off"></label>
+      </section>
+      <section id="custom-range" class="custom-range hidden" aria-label="自定义日期区间">
+        <label for="date-start">开始日期<input type="date" id="date-start" autocomplete="off"></label>
+        <span class="range-separator" aria-hidden="true">至</span>
+        <label for="date-end">结束日期<input type="date" id="date-end" autocomplete="off"></label>
+        <span id="range-hint" class="range-hint" role="status">包含起止两天，按计算机本地日期统计。</span>
       </section>
       <div id="notice" class="notice hidden" role="status"></div>
       <section id="metrics" class="metrics" aria-label="核心指标"></section>

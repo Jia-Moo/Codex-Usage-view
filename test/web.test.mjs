@@ -107,4 +107,51 @@ test("project row opens individual model breakdown and back returns to project l
   assert.match(els.content.innerHTML, /Another/);
   assert.equal(runInContext('priceText({usd:0,priced:0,missing:2})', context), "未定价");
   assert.equal(runInContext('priceText({usd:0.2,priced:1,missing:2})', context), "≥ $0.2000");
+
+  // "Today" always resolves in the viewer's current local timezone.
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  const today = runInContext('localDate(new Date())', context);
+  assert.equal(runInContext("dateBounds().start", context), today);
+  assert.equal(runInContext("dateBounds().end", context), today);
+  assert.equal(runInContext("filtered().every(row => row.date === dateBounds().start)", context), true);
+
+  // First switch to custom pre-fills a useful valid 30-day period.
+  els.days.callbacks.get("change")({ target: { value: "custom" } });
+  assert.equal(runInContext('state.customEnd', context), today);
+  assert.ok(runInContext('validLocalDate(state.customStart)', context));
+  assert.equal(runInContext('dateBounds().invalid', context), undefined);
+
+  // Both endpoints are inclusive and the filter applies to every view.
+  els["date-start"].callbacks.get("change")({ target: { value: "2026-11-22" } });
+  els["date-end"].callbacks.get("change")({ target: { value: "2026-11-22" } });
+  assert.equal(runInContext("filtered().length", context), 3);
+  assert.equal(els.export.disabled, false);
+  assert.equal(runInContext("dateBounds().start", context), "2026-11-22");
+  assert.equal(runInContext("dateBounds().end", context), "2026-11-22");
+
+  // Invalid and reversed dates must never silently expand to all-time usage.
+  els["date-start"].callbacks.get("change")({ target: { value: "2026-11-23" } });
+  assert.equal(runInContext("filtered().length", context), 0);
+  assert.equal(els.export.disabled, true);
+  assert.match(els["range-hint"].textContent, /不能晚于/);
+  els["date-start"].callbacks.get("change")({ target: { value: "" } });
+  assert.equal(runInContext("filtered().length", context), 0);
+  assert.equal(els.export.disabled, true);
+  assert.match(els["range-hint"].textContent, /有效的开始日期/);
+  assert.equal(runInContext('validLocalDate("2024-02-29")', context), true);
+  assert.equal(runInContext('validLocalDate("2025-02-29")', context), false);
+
+  // Cross-year custom date boundaries and date scoping are both respected.
+  report.sessions[0].buckets.push({
+    model: "gpt-6.2-sol", date: "2025-12-31",
+    usage: { input: 500, cached: 250, output: 25, reasoning: 3 },
+    pricing: { known: true, usd: 0.002, savedUSD: 0.001 },
+  });
+  els["date-start"].callbacks.get("change")({ target: { value: "2025-12-31" } });
+  els["date-end"].callbacks.get("change")({ target: { value: "2026-01-01" } });
+  assert.equal(runInContext("filtered().length", context), 1);
+  assert.equal(runInContext("filtered()[0].date", context), "2025-12-31");
+  assert.equal(els.export.disabled, false);
+  els.days.callbacks.get("change")({ target: { value: "all" } });
+  assert.equal(runInContext("filtered().length", context), 4);
 });

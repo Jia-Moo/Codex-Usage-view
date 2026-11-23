@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-view",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Local-first, read-only Codex token analytics: per-project/model/session usage, cache-hit rates, and API-equivalent costs.",

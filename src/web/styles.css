@@ -193,3 +193,30 @@ a:hover{color:#172e25}
   .form-grid{grid-template-columns:1fr}
   .project-summary{gap:12px}
 }
+
+
+/* Date-range filter (local calendar dates, inclusive at both boundaries). */
+.custom-range{
+  display:flex;align-items:flex-end;flex-wrap:wrap;gap:11px 13px;
+  background:#fff;border:1px solid var(--line);border-radius:11px;
+  padding:14px 17px;margin:-6px 0 18px;
+}
+.custom-range label{
+  display:flex;flex-direction:column;gap:7px;
+  min-width:160px;color:#89938c;font-size:11px;font-weight:600
+}
+.custom-range input[type="date"]{
+  width:100%;height:38px;padding:8px 11px;
+  border:1px solid #dde2dc;border-radius:7px;
+  color:#26342c;background:#fff;font-size:12px
+}
+.custom-range input[type="date"]:focus{border-color:#72937c}
+.custom-range .range-separator{padding-bottom:9px;font-size:12px;color:#9aa39d}
+.custom-range .range-hint{align-self:flex-end;padding-bottom:9px;font-size:11px;color:#8b958c}
+.custom-range .range-hint.invalid{color:#a14f3c;font-weight:600}
+@media(max-width:480px){
+  .custom-range{gap:11px}
+  .custom-range label{flex:1 1 125px;min-width:125px}
+  .custom-range .range-hint{flex-basis:100%;padding-bottom:0}
+  .custom-range .range-separator{padding-bottom:9px}
+}

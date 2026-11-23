@@ -31,6 +31,7 @@ Codex Usage View answers these questions by parsing the logs already stored on y
 | Projects | Group by Codex working directory (`cwd`); click a project to drill into models, dates and sessions |
 | Models | Separate usage and cost by model, including sessions with model changes |
 | Dates | Attribute usage to the local calendar date of its token event |
+| Date ranges | Today, last 7/30/90/365 days, all time, or a custom inclusive start/end date |
 | Sessions | Search and inspect individual conversations, with per-model/date breakdown |
 | API-equivalent cost | Separate input, cached-input and output rates; explicitly flag unknown prices |
 | Pricing | Bundled OpenAI Standard API prices for selected model IDs, optional LiteLLM sync, manual overrides |
@@ -82,6 +83,16 @@ node src/server.mjs --hide-titles
 ~~~
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
+
+## v0.4.0: Today and custom date ranges
+
+Use the **Time range** dropdown to choose **Today**, the last 7/30/90/365 days, **All time**, or **Custom date range**.
+
+For a custom range, select a start and end date using the two native date pickers. They are prefilled with the last 30 days on first use. Both boundary days are **included**; ranges spanning months or years are supported. The app interprets token-event timestamps using the computer's **local calendar date** rather than the conversation creation date.
+
+The same date filter applies to the overview metrics, cache statistics, project and model breakdowns, individual session summaries, and exported CSV files. Invalid, missing or reversed dates display a validation message and disable export; they never silently include all history.
+
+For very long ranges, the overview bar chart shows up to 24 recent active dates for readability, while numerical totals, detailed tables and CSV reflect the **entire** selected range.
 
 ## Cost and token methodology
 
@@ -180,7 +191,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.3.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.4.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

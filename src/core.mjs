@@ -60,7 +60,7 @@ function freshSession(filePath) {
   return {
     id: sessionIdFromFile(filePath), file: filePath, projectPath: "", project: "未知项目",
     title: "", started: null, lastSeen: null, turns: 0, source: "",
-    buckets: [], usage: ZERO(), warnings: 0,
+    buckets: [], hours: [], usage: ZERO(), warnings: 0,
     _checkpoint: {
       cursor: 0, previous: null, activeModel: "未知模型", firstTimestamp: null,
       lastTimestamp: null, eventUsers: 0, responseUsers: 0, titleFromUser: false,
@@ -75,6 +75,7 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   if (!checkpoint || !Number.isSafeInteger(checkpoint.cursor) || checkpoint.cursor < 0) throw new Error("Invalid saved cursor");
   session.file = filePath;
   const buckets = new Map((session.buckets || []).map(b => [JSON.stringify([b.model, b.date]), b]));
+  const hours = new Map((session.hours || []).map(b => [JSON.stringify([b.model, b.date, b.hour]), b]));
   const result = await readJsonl(filePath, {
     start: checkpoint.cursor, maxLineBytes,
     onRecord(evt) {
@@ -135,6 +136,13 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
       const bucket = buckets.get(key) || { model, date, usage: ZERO() };
       bucket.usage = addUsage(bucket.usage, delta);
       buckets.set(key, bucket);
+      // Keep a small derived 24-hour index for accurate per-hour charts.
+      // The original event body is never persisted to the usage index.
+      const hour = new Date(stamp || session.started).getHours();
+      const hourKey = JSON.stringify([model, date, hour]);
+      const hourly = hours.get(hourKey) || { model, date, hour, usage: ZERO() };
+      hourly.usage = addUsage(hourly.usage, delta);
+      hours.set(hourKey, hourly);
     },
   });
   checkpoint.cursor = result.cursor;
@@ -145,6 +153,8 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   session.turns = Math.max(checkpoint.eventUsers, checkpoint.responseUsers);
   session.title ||= "会话 " + session.id.slice(0, 8);
   session.buckets = [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date));
+  session.hours = [...hours.values()].sort((a, b) =>
+    a.date.localeCompare(b.date) || a.hour - b.hour || a.model.localeCompare(b.model));
   session.usage = session.buckets.reduce((sum, b) => addUsage(sum, b.usage), ZERO());
   session._lineWarnings = result.skippedLongLines;
   return session;
@@ -264,6 +274,9 @@ export function priceReport(snapshot, prices) {
     started: entry.started, lastSeen: entry.lastSeen, turns: entry.turns,
     source: entry.source, usage: entry.usage, warnings: entry.warnings,
     buckets: entry.buckets.map(bucket => ({
+      ...bucket, pricing: calculateCost(bucket.usage, bucket.model, prices),
+    })),
+    hours: (entry.hours || []).map(bucket => ({
       ...bucket, pricing: calculateCost(bucket.usage, bucket.model, prices),
     })),
   }));

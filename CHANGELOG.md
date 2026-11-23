@@ -1,0 +1,45 @@
+# Changelog / 更新日志
+
+All notable changes are documented here. Versions follow the version in `package.json`.
+
+## [0.5.0] — 2026-11-23
+
+### Added / 新增
+
+- Token trend chart with stacked, consistently colored segments for each model.
+- API-equivalent cost trend chart with matching model colors, independent cost axis and tooltips.
+- Hourly charts (24 bins) when selecting **Today** or a custom date range with the same start/end date.
+- An hourly table showing input, cached input, output, total tokens, cache-hit ratio, estimated costs and models.
+- Time-aware grouping: daily (2–31 days), weekly (32–180 days), monthly (longer).
+
+### Changed / 调整
+
+- Local usage-index schema upgraded from v1 to v2 to store per-model hourly derived usage.
+- Existing users get a **one-time complete rescan** on first launch of v0.5.0; source Codex JSONL logs are not modified.
+- Both charts clearly flag missing model prices rather than treating unknown prices as zero.
+- Model colors are consistent across both charts and legend.
+- Updated Chinese and English READMEs, project description, and version metadata.
+
+### Notes / 说明
+
+- Hourly data is derived from **local timestamps of actual token events**, not approximated from day totals.
+- Hourly details currently appear in the UI. CSV export remains grouped by date/model/session.
+- Cost is an **API-equivalent estimate**, not actual ChatGPT subscription charges.
+
+## [0.4.0] — 2026-11-23
+
+- Today and custom inclusive date ranges, with local-calendar filtering and validation.
+
+## [0.3.0] — 2026-11-22
+
+- Streaming large JSONL logs, append-only resume and local derived-statistics index.
+- Improved user-message compatibility and scan-status diagnostics.
+
+## [0.2.0] — 2026-11-22
+
+- Built-in Standard API-equivalent pricing, explicit unknown-price handling, project model drill-down.
+- Neutral light UI design.
+
+## [0.1.0] — 2026-11-22
+
+- Initial local-only Codex usage dashboard, project/model/session/date breakdowns and CSV export.

@@ -30,14 +30,15 @@ Codex Usage View answers these questions by parsing the logs already stored on y
 | Cache efficiency | Cache-hit ratio and estimated savings compared to uncached input |
 | Projects | Group by Codex working directory (`cwd`); click a project to drill into models, dates and sessions |
 | Models | Separate usage and cost by model, including sessions with model changes |
-| Dates | Attribute usage to the local calendar date of its token event |
+| Dates | Attribute usage to the event's local calendar date, or to individual hours for single-day charts |
 | Date ranges | Today, last 7/30/90/365 days, all time, or a custom inclusive start/end date |
 | Sessions | Search and inspect individual conversations, with per-model/date breakdown |
-| API-equivalent cost | Separate input, cached-input and output rates; explicitly flag unknown prices |
+| API-equivalent cost | Separate input, cached-input and output rates; a color-coded cost trend and explicit warnings for unknown prices |
 | Pricing | Bundled OpenAI Standard API prices for selected model IDs, optional LiteLLM sync, manual overrides |
 | Large JSONL logs | Streaming reader, no blanket 48 MiB file-size cutoff |
 | Incremental index | Reuse unchanged file summaries, resume append-only logs and reparse changed/truncated ones |
 | Export | Local CSV export suitable for Excel |
+| Usage and cost trends | Two model-stacked color charts with consistent legend and hourly breakdown for a single day |
 | Local-first UI | Simple browser dashboard served from `127.0.0.1`; no frontend build toolchain |
 
 ## Quick start
@@ -84,6 +85,19 @@ node src/server.mjs --hide-titles
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
 
+## v0.5.0: Model-stacked usage and cost trends, with hourly detail
+
+- **24-hour view for a single local day**: selecting **Today** or a custom range with identical start/end dates switches both trend charts to 24 hourly bins (00:00–23:00), using actual token-event timestamps rather than evenly distributing daily totals.
+- **Color-coded model stacks**: each column is a stack of model-specific color segments. Token and cost charts share a deterministic model palette and legend. Hover a segment to inspect the amount and percentage contributed by that model in the period.
+- **API-equivalent cost trend**: the second chart calculates estimated USD equivalents by time period and model using separate uncached-input, cached-input and output rates. Unknown prices are **not silently interpreted as zero**; partial or completely unavailable prices are clearly indicated.
+- **Hourly detail table**: on a single day, a 24-row table also displays input, cached input, output, total tokens, cache-hit ratios, estimated costs and model names, including empty hours.
+- **Multi-day range aggregation**: 2–31 days use daily bars, 32–180 days use weekly bars, and longer ranges use monthly bars. The trend covers the entire selected period.
+- **Local index schema v2**: hourly aggregates require a one-time local rescan after upgrading to v0.5.0. Old Codex session JSONL files remain untouched, no raw logs are uploaded, and subsequent scans still benefit from append-only caching.
+- **CSV remains date-level**: the single-day hourly detail is currently displayed in the dashboard, while the existing CSV export retains its date/model/session granularity.
+
+**The displayed prices are API-equivalent estimates using the currently configured model rates, not actual ChatGPT subscription billing.** Reasoning tokens remain a subset of output tokens.
+
+
 ## v0.4.0: Today and custom date ranges
 
 Use the **Time range** dropdown to choose **Today**, the last 7/30/90/365 days, **All time**, or **Custom date range**.
@@ -92,7 +106,7 @@ For a custom range, select a start and end date using the two native date picker
 
 The same date filter applies to the overview metrics, cache statistics, project and model breakdowns, individual session summaries, and exported CSV files. Invalid, missing or reversed dates display a validation message and disable export; they never silently include all history.
 
-For very long ranges, the overview bar chart shows up to 24 recent active dates for readability, while numerical totals, detailed tables and CSV reflect the **entire** selected range.
+Single-day ranges now show 24 local-hour bars and an hourly table. Multi-day charts aggregate daily, weekly or monthly depending on the selected span, covering the **entire** range.
 
 ## Cost and token methodology
 
@@ -191,7 +205,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.4.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.5.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

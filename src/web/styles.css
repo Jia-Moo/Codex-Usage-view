@@ -220,3 +220,65 @@ a:hover{color:#172e25}
   .custom-range .range-hint{flex-basis:100%;padding-bottom:0}
   .custom-range .range-separator{padding-bottom:9px}
 }
+
+
+/* Model-aware time-series charts — muted, accessible local-first palette. */
+.trend-chart{margin-top:6px;min-width:0}
+.trend-scale{font-size:11px;color:#89958a;margin:6px 0 12px;font-variant-numeric:tabular-nums}
+.trend-scroll{
+  width:100%;overflow-x:auto;overflow-y:hidden;padding:2px 0 9px;
+  scrollbar-width:thin;scrollbar-color:#ced7cf transparent
+}
+.trend-bars{
+  display:flex;align-items:stretch;gap:9px;
+  border-bottom:1px solid #e8ede6;padding:0 5px;min-height:226px
+}
+.trend-col{
+  flex:1 0 0;min-width:20px;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-end;gap:7px
+}
+.trend-plot{
+  height:190px;width:100%;display:flex;align-items:flex-end;
+  background-image:linear-gradient(to top,#edf1ec 1px,transparent 1px);
+  background-size:100% 25%;background-repeat:repeat;
+  border-radius:3px 3px 0 0
+}
+.trend-stack{
+  display:flex;flex-direction:column-reverse;align-items:stretch;
+  width:100%;border-radius:3px 3px 0 0;overflow:hidden;min-height:0
+}
+.trend-segment{
+  display:block;width:100%;flex-shrink:0;transition:filter .12s;
+  border-top:1px solid #ffffff30;min-height:0
+}
+.trend-segment:hover{filter:brightness(1.13) saturate(1.25);outline:1px solid #44534a}
+.trend-col:focus-within .trend-stack{outline:2px solid #b5cabb}
+.trend-label{
+  height:22px;font-size:10px;line-height:1.3;color:#78877e;
+  white-space:nowrap;font-variant-numeric:tabular-nums
+}
+.trend-warning{
+  font-size:11px;color:#8e7141;background:#fbf8f0;
+  border:1px solid #ece2cb;border-radius:7px;padding:9px 12px;margin:14px 0 0
+}
+.model-legend{display:flex;align-items:center;flex-wrap:wrap;gap:10px 13px}
+.model-legend-item{
+  display:inline-flex;align-items:center;flex-wrap:wrap;gap:7px;
+  padding:7px 11px;border:1px solid #e7ece7;background:#f9faf8;
+  border-radius:7px;font-size:11px;color:#445148
+}
+.model-swatch{
+  display:inline-block;width:10px;height:10px;border-radius:2px;
+  border:1px solid #182a2012;flex:none
+}
+.legend-percent{color:#87948a;font-variant-numeric:tabular-nums}
+.legend-missing{color:#a17e49;font-size:10px}
+@media(max-width:790px){
+  .trend-bars{min-height:215px}
+  .trend-plot{height:180px}
+}
+
+/* Per-hour detail: colors align with both stacked charts. */
+.hour-models{display:flex;flex-wrap:wrap;gap:5px 9px;max-width:390px}
+.hour-model{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-size:10px;color:#6e8074}
+.hour-model .model-swatch{width:8px;height:8px}

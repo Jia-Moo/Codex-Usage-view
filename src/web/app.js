@@ -1,6 +1,6 @@
 const token = document.querySelector('meta[name="local-token"]').content;
 const $ = id => document.getElementById(id);
-const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, loading: false };
+const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, modelColors: new Map(), loading: false };
 const heading = { overview: "使用情况总览", projects: "项目分析", models: "模型分析", sessions: "会话明细", pricing: "API 等效价格" };
 const fields = ["input", "cached", "output", "reasoning"];
 
@@ -95,6 +95,9 @@ async function loadReport(force = false) {
   try {
     const [report, prices] = await Promise.all([request("/api/report" + (force ? "?refresh=1" : "")), request("/api/prices")]);
     state.report = report; state.prices = prices;
+    const colorModels = [...new Set(report.sessions.flatMap(s => s.buckets.map(b => b.model)))].sort();
+    state.modelColors = new Map(colorModels.map((model, index) =>
+      [model, index < MODEL_PALETTE.length ? MODEL_PALETTE[index] : null]));
     $("refresh-stamp").textContent = "更新于 " + new Date(report.meta.scannedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     fillFilters();
     render();
@@ -191,15 +194,165 @@ function metricCellsRich(g) {
     numTd(percent(g.usage.input ? g.usage.cached / g.usage.input : 0)) +
     '<td class="num ' + (g.missing ? "price-unknown" : "") + '">' + escapeHTML(priceText(g)) + "</td>";
 }
-function barChart(rows) {
-  const days = grouped(rows, r => r.date).sort((a, b) => a.key.localeCompare(b.key));
-  const recent = days.slice(-Math.min(Number(state.days) || 24, 24));
-  if (!recent.length) return '<div class="empty">这段时间没有 Token 记录</div>';
-  const max = Math.max(1, ...recent.map(r => count(r.usage)));
-  return '<div class="chart" aria-label="每日 Token 用量柱状图">' + recent.map(g => {
-    const height = Math.max(2, Math.round(count(g.usage) / max * 100));
-    return '<div class="chart-bar-wrap" title="' + escapeHTML(g.key + " · " + fmt(count(g.usage)) + " Token") + '"><div class="chart-column"><div class="chart-bar" style="height:' + height + '%"></div></div><div class="chart-day">' + escapeHTML(g.key.slice(5)) + "</div></div>";
-  }).join("") + '</div><div class="legend"><span><i class="dot"></i> 每日真实 Token 用量</span><span>输入包含缓存 Token；推理输出包含在输出中</span></div>';
+const MODEL_PALETTE = [
+  "#477b70", "#c28e55", "#5b83a9", "#ad7478", "#718d50", "#8c75a7",
+  "#b87656", "#5795a0", "#a17e49", "#98769a", "#657e91", "#9b8e58",
+];
+function colorForModel(model) {
+  const mapped = state.modelColors?.get(model);
+  if (mapped) return mapped;
+  // Deterministic fallback, shared by both charts and stable across filters.
+  let hash = 0;
+  for (const char of String(model)) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  return "hsl(" + (((hash >>> 0) * 0.618033988749895 * 360) % 360).toFixed(0) + " 36% 44%)";
+}
+function utcDay(date) { return new Date(date + "T12:00:00Z"); }
+function utcString(date) { return date.toISOString().slice(0, 10); }
+function mondayOf(date) {
+  const day = utcDay(date);
+  day.setUTCDate(day.getUTCDate() - (day.getUTCDay() + 6) % 7);
+  return utcString(day);
+}
+function spanDays(start, end) {
+  return Math.round((utcDay(end).getTime() - utcDay(start).getTime()) / 86400000) + 1;
+}
+function trendKey(day, granularity) {
+  if (granularity === "week") return mondayOf(day);
+  if (granularity === "month") return day.slice(0, 7);
+  return day;
+}
+function timeline(rows) {
+  const bounds = dateBounds();
+  if (bounds.invalid) return { buckets: [], models: [], granularity: "day", singleDay: false };
+  const allDates = rows.map(r => r.date).sort();
+  const start = bounds.start || allDates[0], end = bounds.end || allDates.at(-1);
+  if (!start || !end || start > end) return { buckets: [], models: [], granularity: "day", singleDay: false };
+  const singleDay = start === end;
+  const length = spanDays(start, end);
+  const granularity = singleDay ? "hour" : length <= 31 ? "day" : length <= 180 ? "week" : "month";
+  const keys = [];
+  if (singleDay) {
+    for (let hour = 0; hour < 24; hour++) keys.push(String(hour).padStart(2, "0"));
+  } else if (granularity === "month") {
+    const [year, month] = start.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, 1, 12));
+    while (utcString(date).slice(0, 7) <= end.slice(0, 7)) {
+      keys.push(utcString(date).slice(0, 7));
+      date.setUTCMonth(date.getUTCMonth() + 1);
+    }
+  } else {
+    const day = utcDay(granularity === "week" ? mondayOf(start) : start);
+    const step = granularity === "week" ? 7 : 1;
+    while (utcString(day) <= end) {
+      keys.push(utcString(day));
+      day.setUTCDate(day.getUTCDate() + step);
+    }
+  }
+  const buckets = keys.map(key => ({ key, models: new Map(), usage: emptyUsage(), tokens: 0, usd: 0, unpriced: 0, priced: 0 }));
+  const lookup = new Map(buckets.map(b => [b.key, b]));
+  const allowed = new Set(rows.map(r => JSON.stringify([r.session.id, r.model, r.date])));
+  const source = singleDay
+    ? [...new Map(rows.map(r => [r.session.id, r.session])).values()]
+        .flatMap(s => (s.hours || []).filter(h => allowed.has(JSON.stringify([s.id, h.model, h.date]))))
+    : rows;
+  for (const item of source) {
+    const key = singleDay ? String(item.hour).padStart(2, "0") : trendKey(item.date, granularity);
+    const bucket = lookup.get(key);
+    if (!bucket) continue;
+    const values = bucket.models.get(item.model) || { model: item.model, usage: emptyUsage(), tokens: 0, usd: 0, known: 0, missing: 0 };
+    const tokens = count(item.usage);
+    values.tokens += tokens;
+    bucket.tokens += tokens;
+    addUsage(values.usage, item.usage);
+    addUsage(bucket.usage, item.usage);
+    if (item.pricing?.known) {
+      values.usd += item.pricing.usd;
+      bucket.usd += item.pricing.usd;
+      values.known++;
+      bucket.priced++;
+    } else if (tokens > 0) {
+      values.missing++;
+      bucket.unpriced++;
+    }
+    bucket.models.set(item.model, values);
+  }
+  const models = [...new Set(rows.map(r => r.model))].sort();
+  return { buckets, models, granularity, singleDay, start, end };
+}
+function periodLabel(key, granularity) {
+  if (granularity === "hour") return key + ":00";
+  if (granularity === "month") return key;
+  return key.slice(5);
+}
+function stackedTrend(data, metric) {
+  const isCost = metric === "usd";
+  const buckets = data.buckets;
+  if (!buckets.length) return '<div class="empty">此时间范围没有用量数据</div>';
+  const max = Math.max(0, ...buckets.map(b => b[metric === "usd" ? "usd" : "tokens"]));
+  const missing = buckets.reduce((total, b) => total + b.unpriced, 0);
+  if (isCost && max === 0 && missing) {
+    return '<div class="empty"><strong>无法计算等效费用</strong>所选范围的模型缺少价格。可在「API 价格」中设置或同步费率。</div>';
+  }
+  const width = Math.max(650, buckets.length * (data.granularity === "hour" ? 38 : 46));
+  const columns = buckets.map((bucket, index) => {
+    const value = isCost ? bucket.usd : bucket.tokens;
+    const height = max > 0 ? value / max * 100 : 0;
+    const segments = [...bucket.models.values()].filter(part => (isCost ? part.usd : part.tokens) > 0)
+      .sort((a, b) => a.model.localeCompare(b.model)).map(part => {
+        const amount = isCost ? part.usd : part.tokens;
+        const share = value ? 100 * amount / value : 0;
+        const detail = part.model + " · " + (isCost ? money(amount) : fmt(amount) + " Token") + " · " + share.toFixed(1) + "%";
+        return '<div class="trend-segment" data-model="' + escapeHTML(part.model) + '" style="height:' +
+          share.toFixed(6) + '%;background-color:' + colorForModel(part.model) + '" title="' + escapeHTML(detail) +
+          '" aria-label="' + escapeHTML(detail) + '"></div>';
+      }).join("");
+    const totalLabel = periodLabel(bucket.key, data.granularity) + " · " +
+      (isCost ? money(bucket.usd) : fmt(bucket.tokens) + " Token");
+    const xLabel = data.granularity === "hour" && index % 2 !== 0 ? "" : periodLabel(bucket.key, data.granularity);
+    return '<div class="trend-col" title="' + escapeHTML(totalLabel) + '" role="group" aria-label="' + escapeHTML(totalLabel) +
+      '"><div class="trend-plot"><div class="trend-stack" style="height:' + height.toFixed(4) + '%">' +
+      segments + '</div></div><div class="trend-label">' + escapeHTML(xLabel) + "</div></div>";
+  }).join("");
+  const note = isCost && missing
+    ? '<p class="trend-warning">部分模型未定价：图中费用只包含有明确价格的模型，不能视为总费用。</p>' : "";
+  const scale = max ? (isCost ? money(max) : short(max) + " Token") : (isCost ? "$0.00" : "0 Token");
+  return '<div class="trend-chart"><div class="trend-scale">最高单个时间段：' + escapeHTML(scale) + '</div>' +
+    '<div class="trend-scroll" tabindex="0" aria-label="' + (isCost ? "API 等效成本" : "Token") +
+    ' 按模型堆叠趋势图，可横向滚动"><div class="trend-bars" style="min-width:' + width + 'px">' +
+    columns + "</div></div>" + note + "</div>";
+}
+function modelLegend(data, rows) {
+  const totals = grouped(rows, r => r.model);
+  if (!totals.length) return "";
+  const total = Math.max(1, totals.reduce((sum, r) => sum + count(r.usage), 0));
+  return '<div class="model-legend" aria-label="模型颜色图例">' + totals
+    .sort((a, b) => count(b.usage) - count(a.usage))
+    .map(row => '<span class="model-legend-item"><i class="model-swatch" style="background:' +
+      colorForModel(row.key) + '"></i><span>' + escapeHTML(row.key) + '</span><span class="legend-percent">' +
+      (count(row.usage) / total * 100).toFixed(1) + '%</span>' +
+      (row.missing ? '<span class="legend-missing">未完整计价</span>' : '') + '</span>')
+    .join("") + "</div>";
+}
+function hourlyDetail(data) {
+  if (!data.singleDay) return "";
+  const body = data.buckets.map(bucket => {
+    const usage = bucket.usage;
+    const price = bucket.priced ? (bucket.unpriced ? "≥ " : "") + money(bucket.usd)
+      : bucket.unpriced ? "未定价" : "$0.00";
+    const models = [...bucket.models.values()].sort((a, b) => b.tokens - a.tokens)
+      .map(model => '<span class="hour-model"><i class="model-swatch" style="background:' +
+        colorForModel(model.model) + '"></i>' + escapeHTML(model.model) + '</span>').join("");
+    return '<tr><td class="primary-cell">' + escapeHTML(bucket.key + ":00–" + bucket.key + ":59") +
+      '</td>' + numTd(fmt(usage.input)) + numTd(fmt(usage.cached)) +
+      numTd(fmt(usage.output)) + numTd(fmt(bucket.tokens)) +
+      numTd(percent(usage.input ? usage.cached / usage.input : 0)) +
+      '<td class="num ' + (bucket.unpriced ? "price-unknown" : "") + '">' + escapeHTML(price) + '</td>' +
+      '<td><div class="hour-models">' + models + '</div></td></tr>';
+  }).join("");
+  return section("逐小时明细", "按本地时间 00:00–23:59 汇总；包含零用量小时，费用仅统计已定价模型",
+    table([{ text: "小时" }, { text: "输入", right: true }, { text: "缓存输入", right: true },
+      { text: "输出", right: true }, { text: "总 Token", right: true },
+      { text: "缓存命中率", right: true }, { text: "等效费用", right: true }, { text: "使用模型" }], body));
 }
 function cachePanel(rows) {
   const a = aggregate(rows), u = a.usage;
@@ -213,15 +366,29 @@ function cachePanel(rows) {
 }
 function renderOverview(rows) {
   const popular = grouped(rows, r => r.model).slice(0, 6);
-  const html = '<div class="split">' +
-    section("Token 使用趋势", "按本地日历日期汇总，展示最近最多 24 个有用量的日期", barChart(rows)) +
-    section("缓存效率", "缓存输入仍计入总输入，但通常具有更低的 API 单价", cachePanel(rows)) +
+  const data = timeline(rows);
+  const label = data.granularity === "hour" ? "逐小时（00:00–23:00）"
+    : data.granularity === "day" ? "逐日" : data.granularity === "week" ? "按周" : "按月";
+  const html =
+    section("Token 使用趋势", label + " · 每个色块代表一个模型的 Token 使用量，色块高度表示其占比",
+      stackedTrend(data, "tokens")) +
+    section("API 等效费用趋势", label + " · 使用当前模型价格分别计算缓存输入、非缓存输入和输出",
+      stackedTrend(data, "usd")) +
+    section("模型颜色说明", "两张图的模型颜色保持一致；百分比表示所选范围内的 Token 占比",
+      modelLegend(data, rows)) +
+    hourlyDetail(data) +
+    '<div class="split">' +
+      section("缓存效率", "缓存输入仍计入总输入，但通常具有更低的 API 单价", cachePanel(rows)) +
+      section("趋势图说明", "悬停在各模型色块上查看该时间段的数值与比例",
+        '<p class="helper">选择「今天」或将自定义开始和结束日期设成同一天，图表显示 24 个小时。选择多日范围时自动按日、周或月展示，以覆盖完整区间。</p>' +
+        '<p class="helper">颜色表示模型，Token 图按总 Token 堆叠，费用图按已定价的 API 等效美元金额堆叠。推理 Token 已包含在输出中，不重复计算。</p>') +
     "</div>" +
     section("主要模型", "按 Token 用量排序。费用显示“≥”说明部分模型未定价", table(defaultColumns(), popular.map(g =>
       '<tr><td class="primary-cell"><span class="chip">' + escapeHTML(g.key) + "</span></td>" + metricCellsRich(g) + "</tr>").join(""))) +
     renderSessionTable(rows, 8);
   return html;
 }
+
 function renderProjectTable(rows) {
   const groups = grouped(rows, r => r.session.projectPath || "未知项目");
   const body = groups.map(g => {

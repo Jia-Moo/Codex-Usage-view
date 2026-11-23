@@ -7,11 +7,11 @@ import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-const VERSION = 1;
+const VERSION = 2;
 const SAMPLE_BYTES = 4096;
 export const defaultIndexFile = (root) => {
   const key = createHash("sha256").update(String(root || "default")).digest("hex").slice(0, 14);
-  return join(homedir(), ".codex-usage-view", "usage-index-v1-" + key + ".json");
+  return join(homedir(), ".codex-usage-view", "usage-index-v2-" + key + ".json");
 };
 
 export async function fingerprint(file, size) {

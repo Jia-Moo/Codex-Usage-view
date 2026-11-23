@@ -1,6 +1,6 @@
 const token = document.querySelector('meta[name="local-token"]').content;
 const $ = id => document.getElementById(id);
-const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, modelColors: new Map(), loading: false };
+const state = { report: null, prices: null, page: "overview", days: "30", customStart: "", customEnd: "", project: "all", model: "all", search: "", projectDetail: null, modelColors: new Map(), trendData: null, trendActiveModel: null, activeTrendTarget: null, pinnedTrendElement: null, loading: false };
 const heading = { overview: "使用情况总览", projects: "项目分析", models: "模型分析", sessions: "会话明细", pricing: "API 等效价格" };
 const fields = ["input", "cached", "output", "reasoning"];
 
@@ -259,7 +259,7 @@ function timeline(rows) {
     const key = singleDay ? String(item.hour).padStart(2, "0") : trendKey(item.date, granularity);
     const bucket = lookup.get(key);
     if (!bucket) continue;
-    const values = bucket.models.get(item.model) || { model: item.model, usage: emptyUsage(), tokens: 0, usd: 0, known: 0, missing: 0 };
+    const values = bucket.models.get(item.model) || { model: item.model, usage: emptyUsage(), tokens: 0, usd: 0, savedUSD: 0, known: 0, missing: 0 };
     const tokens = count(item.usage);
     values.tokens += tokens;
     bucket.tokens += tokens;
@@ -267,6 +267,7 @@ function timeline(rows) {
     addUsage(bucket.usage, item.usage);
     if (item.pricing?.known) {
       values.usd += item.pricing.usd;
+      values.savedUSD += item.pricing.savedUSD || 0;
       bucket.usd += item.pricing.usd;
       values.known++;
       bucket.priced++;
@@ -302,9 +303,12 @@ function stackedTrend(data, metric) {
       .sort((a, b) => a.model.localeCompare(b.model)).map(part => {
         const amount = isCost ? part.usd : part.tokens;
         const share = value ? 100 * amount / value : 0;
-        const detail = part.model + " · " + (isCost ? money(amount) : fmt(amount) + " Token") + " · " + share.toFixed(1) + "%";
-        return '<div class="trend-segment" data-model="' + escapeHTML(part.model) + '" style="height:' +
-          share.toFixed(6) + '%;background-color:' + colorForModel(part.model) + '" title="' + escapeHTML(detail) +
+        const detail = part.model + " · " + (isCost ? money(amount) : fmt(amount) + " Token") +
+          " · 占本时段 " + share.toFixed(1) + "%";
+        return '<div class="trend-segment" data-model="' + escapeHTML(part.model) +
+          '" data-period="' + escapeHTML(bucket.key) + '" data-metric="' + metric +
+          '" tabindex="0" role="img" aria-describedby="trend-tooltip" style="height:' +
+          share.toFixed(6) + '%;background-color:' + colorForModel(part.model) +
           '" aria-label="' + escapeHTML(detail) + '"></div>';
       }).join("");
     const totalLabel = periodLabel(bucket.key, data.granularity) + " · " +
@@ -314,7 +318,7 @@ function stackedTrend(data, metric) {
       : buckets.length > 24 ? 5 : buckets.length > 14 ? 3 : 1;
     const xLabel = index % stride === 0 || index === buckets.length - 1
       ? periodLabel(bucket.key, data.granularity) : "";
-    return '<div class="trend-col" title="' + escapeHTML(totalLabel) + '" role="group" aria-label="' + escapeHTML(totalLabel) +
+    return '<div class="trend-col" role="group" aria-label="' + escapeHTML(totalLabel) +
       '"><div class="trend-plot"><div class="trend-stack" style="height:' + height.toFixed(4) + '%">' +
       segments + '</div></div><div class="trend-label">' + escapeHTML(xLabel) + "</div></div>";
   }).join("");
@@ -340,7 +344,8 @@ function modelLegend(data, rows, metric) {
     const tooltip = group.key + " · " + (isCost
       ? (group.priced ? money(group.usd) + (group.missing ? " · 部分未定价" : "") : "未定价")
       : fmt(value) + " Token") + " · " + status;
-    return '<span class="trend-legend-item" title="' + escapeHTML(tooltip) + '">' +
+    return '<span class="trend-legend-item" tabindex="0" data-model="' + escapeHTML(group.key) +
+      '" aria-label="' + escapeHTML(tooltip) + '">' +
       '<i class="model-swatch" style="background:' + colorForModel(group.key) + '"></i>' +
       '<span class="trend-legend-name">' + escapeHTML(group.key) + '</span>' +
       '<span class="trend-legend-share' + (status === "未定价" ? " unpriced" : "") +
@@ -364,6 +369,136 @@ function trendPanel(title, caption, data, rows, metric) {
     escapeHTML(caption) + '</p></div>' + modelLegend(data, rows, metric) +
     '</div>' + stackedTrend(data, metric) + '</section>';
 }
+function trendPeriodText(period, data) {
+  if (data.granularity === "hour") return data.start + "  " + period + ":00–" + period + ":59（本地时间）";
+  if (data.granularity === "day") return period + "（本地日期）";
+  if (data.granularity === "week") return period + " 所在周";
+  return period + " 月";
+}
+function trendTooltipHTML(data, metric, periodKey, model) {
+  const bucket = data?.buckets.find(item => item.key === periodKey);
+  const part = bucket?.models.get(model);
+  if (!bucket || !part) return "";
+  const isCost = metric === "usd";
+  const base = isCost ? bucket.usd : bucket.tokens;
+  const value = isCost ? part.usd : part.tokens;
+  const share = base > 0 ? value / base : 0;
+  const usage = part.usage;
+  const unCached = Math.max(0, usage.input - usage.cached);
+  const costText = part.known
+    ? (part.missing ? "≥ " : "") + money(part.usd)
+    : "未定价";
+  const savedText = part.known
+    ? (part.missing ? "≥ " : "") + money(part.savedUSD)
+    : "未定价";
+  const missingNote = part.missing
+    ? '<div class="trend-tip-warning">该模型在本时段有未定价用量，费用仅包含已知部分。</div>'
+    : "";
+  const row = (label, value) => '<div class="trend-tip-stat"><span>' + escapeHTML(label) +
+    '</span><strong>' + escapeHTML(value) + '</strong></div>';
+  const headValue = isCost ? costText : fmt(part.tokens) + " Token";
+  return '<div class="trend-tip-head"><span class="trend-tip-swatch" style="background:' +
+    colorForModel(model) + '"></span><span class="trend-tip-name">' + escapeHTML(model) +
+    '</span><span class="trend-tip-mode">' + (isCost ? "API 费用" : "Token 用量") + '</span></div>' +
+    '<div class="trend-tip-period">' + escapeHTML(trendPeriodText(periodKey, data)) + '</div>' +
+    '<div class="trend-tip-hero"><div><small>当前模型 / 当前时间段</small><strong>' +
+    escapeHTML(headValue) + '</strong></div><div class="trend-tip-share"><small>时段占比</small><strong>' +
+    percent(share) + '</strong></div></div>' +
+    '<div class="trend-tip-sharebar" aria-hidden="true"><span style="width:' +
+    (share * 100).toFixed(3) + '%;background:' + colorForModel(model) + '"></span></div>' +
+    '<div class="trend-tip-grid">' +
+      row("输入 Token", fmt(usage.input)) +
+      row("缓存输入", fmt(usage.cached)) +
+      row("非缓存输入", fmt(unCached)) +
+      row("输出 Token", fmt(usage.output)) +
+      row("其中推理输出", fmt(usage.reasoning)) +
+      row("缓存命中率", percent(usage.input ? usage.cached / usage.input : 0)) +
+      row("API 等效费用", costText) +
+      row("缓存节省估算", savedText) +
+    '</div>' +
+    missingNote +
+    '<div class="trend-tip-foot">输入已包含缓存 Token，推理 Token 已包含在输出中。费用是 API 等效估算，并非订阅账单。</div>';
+}
+function resetTrendInteraction() {
+  state.trendData = null;
+  state.trendActiveModel = null;
+  state.activeTrendTarget = null;
+  state.pinnedTrendElement = null;
+  const tooltip = $("trend-tooltip");
+  if (tooltip) {
+    tooltip.classList.remove("is-visible");
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+}
+function highlightTrendModel(model) {
+  if (state.trendActiveModel === model) return;
+  state.trendActiveModel = model;
+  document.querySelectorAll(".trend-segment, .trend-legend-item").forEach(element => {
+    const selected = !!model && element.dataset.model === model;
+    element.classList.toggle("is-model-active", selected);
+    element.classList.toggle("is-model-muted", !!model && !selected);
+  });
+}
+function placeTrendTooltip(clientX, clientY) {
+  const tooltip = $("trend-tooltip");
+  if (!tooltip) return;
+  const width = tooltip.offsetWidth || 336;
+  const height = tooltip.offsetHeight || 326;
+  const viewportWidth = window.innerWidth || 1280;
+  const viewportHeight = window.innerHeight || 800;
+  const margin = 12;
+  let x = clientX + 20;
+  let y = clientY + 16;
+  if (x + width + margin > viewportWidth) x = clientX - width - 20;
+  if (y + height + margin > viewportHeight) y = clientY - height - 16;
+  tooltip.style.left = Math.round(Math.max(margin, Math.min(x, viewportWidth - width - margin))) + "px";
+  tooltip.style.top = Math.round(Math.max(margin, Math.min(y, viewportHeight - height - margin))) + "px";
+}
+function hideTrendTooltip({ force = false } = {}) {
+  if (state.pinnedTrendElement && !force) return;
+  const tooltip = $("trend-tooltip");
+  if (tooltip) {
+    tooltip.classList.remove("is-visible");
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+  highlightTrendModel(null);
+  state.activeTrendTarget = null;
+  if (force) state.pinnedTrendElement = null;
+}
+function activateTrendTarget(target, event, pinned = false) {
+  if (!target || !state.trendData) return;
+  const model = target.dataset.model;
+  if (!model) return;
+  highlightTrendModel(model);
+  state.activeTrendTarget = target;
+  if (target.classList.contains("trend-legend-item")) {
+    if (!state.pinnedTrendElement) hideFloatingTrendTooltip();
+    return;
+  }
+  const html = trendTooltipHTML(state.trendData, target.dataset.metric, target.dataset.period, model);
+  if (!html) return;
+  const tooltip = $("trend-tooltip");
+  if (!tooltip) return;
+  if (pinned) state.pinnedTrendElement = target;
+  tooltip.innerHTML = html;
+  tooltip.classList.add("is-visible");
+  tooltip.setAttribute("aria-hidden", "false");
+  const rect = event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+    ? { x: event.clientX, y: event.clientY }
+    : (() => {
+      const bounds = target.getBoundingClientRect();
+      return { x: bounds.left + bounds.width / 2, y: bounds.top };
+    })();
+  placeTrendTooltip(rect.x, rect.y);
+}
+function hideFloatingTrendTooltip() {
+  const tooltip = $("trend-tooltip");
+  if (tooltip) {
+    tooltip.classList.remove("is-visible");
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+}
+
 function hourlyDetail(data) {
   if (!data.singleDay) return "";
   const body = data.buckets.map(bucket => {
@@ -398,6 +533,7 @@ function cachePanel(rows) {
 function renderOverview(rows) {
   const popular = grouped(rows, r => r.model).slice(0, 6);
   const data = timeline(rows);
+  state.trendData = data;
   const label = data.granularity === "hour" ? "逐小时 · 00:00–23:00"
     : data.granularity === "day" ? "逐日" : data.granularity === "week" ? "按周" : "按月";
   const html =
@@ -515,6 +651,7 @@ function render() {
   $("page-title").textContent = state.page === "projects" && state.projectDetail ? "项目明细" : heading[state.page];
   document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === state.page));
   syncDateControls();
+  resetTrendInteraction();
   if (!state.report) return;
   const rows = filtered();
   const active = aggregate(rows);
@@ -622,7 +759,53 @@ $("search").addEventListener("input", e => { state.search = e.target.value.trim(
 $("refresh").addEventListener("click", () => loadReport(true));
 $("export").addEventListener("click", downloadCSV);
 $("close-details").addEventListener("click", () => $("details").close());
+// Delegated handlers survive rerenders of the locally generated chart HTML.
+// A click pins the tooltip (useful for touch), Escape and outside clicks dismiss.
+$("content").addEventListener("pointerover", event => {
+  if (state.pinnedTrendElement) return;
+  const target = event.target.closest(".trend-segment, .trend-legend-item");
+  if (target) activateTrendTarget(target, event);
+});
+$("content").addEventListener("pointermove", event => {
+  if (state.pinnedTrendElement) return;
+  const target = event.target.closest(".trend-segment");
+  if (target && state.trendData) {
+    if (state.activeTrendTarget !== target || !$("trend-tooltip").classList.contains("is-visible")) {
+      activateTrendTarget(target, event);
+    } else {
+      placeTrendTooltip(event.clientX, event.clientY);
+    }
+  }
+});
+$("content").addEventListener("pointerout", event => {
+  if (state.pinnedTrendElement) return;
+  const current = event.target.closest(".trend-segment, .trend-legend-item");
+  if (!current) return;
+  const next = event.relatedTarget?.closest?.(".trend-segment, .trend-legend-item");
+  if (current === next) return;
+  if (next) activateTrendTarget(next);
+  else hideTrendTooltip();
+});
+$("content").addEventListener("focusin", event => {
+  const target = event.target.closest(".trend-segment, .trend-legend-item");
+  if (target && !state.pinnedTrendElement) activateTrendTarget(target);
+});
+$("content").addEventListener("focusout", event => {
+  if (state.pinnedTrendElement) return;
+  const next = event.relatedTarget?.closest?.(".trend-segment, .trend-legend-item");
+  if (!next) hideTrendTooltip();
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") hideTrendTooltip({ force: true });
+});
 $("content").addEventListener("click", e => {
+  const trend = e.target.closest(".trend-segment");
+  if (trend) {
+    if (state.pinnedTrendElement === trend) hideTrendTooltip({ force: true });
+    else { state.pinnedTrendElement = null; activateTrendTarget(trend, e, true); }
+    return;
+  }
+  if (state.pinnedTrendElement) hideTrendTooltip({ force: true });
   const project = e.target.closest("[data-project-open]");
   if (project) {
     state.page = "projects";

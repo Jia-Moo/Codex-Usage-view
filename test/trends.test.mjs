@@ -12,9 +12,16 @@ const localDate = date => {
 };
 function element(value = "") {
   const callbacks = new Map();
+  const classes = new Set();
   return {
     value, callbacks, innerHTML: "", textContent: "", disabled: false, open: false, dataset: {},
-    classList: { toggle() {}, add() {}, remove() {} },
+    attributes: {}, style: {}, offsetWidth: 330, offsetHeight: 320,
+    classList: {
+      toggle(name, force) { if (force ?? !classes.has(name)) classes.add(name); else classes.delete(name); },
+      add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
+      contains(name) { return classes.has(name); },
+    },
+    setAttribute(name, value) { this.attributes[name] = value; },
     addEventListener(type, callback) { callbacks.set(type, callback); },
     get options() {
       return [...this.innerHTML.matchAll(/<option value="([^"]*)"/g)].map(x => ({ value: x[1] }));
@@ -72,6 +79,7 @@ async function boot() {
       hidden: true,
       querySelector: () => ({ content: "test-token" }),
       querySelectorAll: () => nav,
+      addEventListener() {},
       getElementById: id => els[id] || (els[id] = element()),
     },
     window: { scrollTo() {} },
@@ -202,4 +210,94 @@ test("model legends remain readable with many models and do not expand the chart
   assert.equal((markup.match(/class="trend-legend-item"/g) || []).length, 10);
   assert.match(markup, /class="trend-legend-more"/);
   assert.match(markup, /还有 4 个模型/);
+});
+
+
+test("hover tooltip shows detailed token accounting, cache efficiency, pricing and share", async () => {
+  const { els, context, today } = await boot();
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  const markup = runInContext('trendTooltipHTML(state.trendData,"tokens","12","model-a")', context);
+  assert.match(markup, new RegExp(today));
+  assert.match(markup, /model-a/);
+  for (const label of ["当前模型", "时段占比", "输入 Token", "缓存输入", "非缓存输入",
+      "输出 Token", "其中推理输出", "缓存命中率", "API 等效费用", "缓存节省估算"]) {
+    assert.ok(markup.includes(label), "missing metric " + label);
+  }
+  assert.match(markup, /220 Token/);
+  assert.match(markup, /65\.0%/);
+  assert.match(markup, /\$0\.6000/);
+  assert.match(markup, /68\.8%/);
+  const missing = runInContext('trendTooltipHTML(state.trendData,"tokens","23","model-c")', context);
+  assert.match(missing, /未定价/);
+  assert.match(missing, /未定价用量/);
+  const html = els.content.innerHTML;
+  assert.match(html, /data-period="12"/);
+  assert.match(html, /data-metric="tokens"/);
+  assert.match(html, /aria-describedby="trend-tooltip"/);
+  assert.match(html, /tabindex="0"/);
+});
+
+test("pointer hover follows cursor and updates between hours of the same model", async () => {
+  const { els, context } = await boot();
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  context.window.innerWidth = 400;
+  context.window.innerHeight = 380;
+  const fakeSegment = period => ({
+    dataset: { model: "model-a", metric: "tokens", period },
+    classList: { contains(name) { return name === "trend-segment"; } },
+    closest(query) { return query.includes(".trend-segment") ? this : null; },
+    getBoundingClientRect() { return { left: 300, top: 300, width: 16, height: 20 }; },
+  });
+  const element12 = fakeSegment("12");
+  const tooltip = els["trend-tooltip"] || (els["trend-tooltip"] = element());
+  els.content.callbacks.get("pointerover")({
+    target: element12, clientX: 378, clientY: 355,
+  });
+  assert.equal(tooltip.classList.contains("is-visible"), true);
+  assert.equal(tooltip.attributes["aria-hidden"], "false");
+  assert.match(tooltip.innerHTML, /12:00–12:59/);
+  assert.match(tooltip.innerHTML, /220 Token/);
+  assert.ok(parseInt(tooltip.style.left, 10) >= 12);
+  assert.ok(parseInt(tooltip.style.left, 10) <= 400 - tooltip.offsetWidth);
+  assert.ok(parseInt(tooltip.style.top, 10) >= 12);
+  assert.ok(parseInt(tooltip.style.top, 10) <= 380 - tooltip.offsetHeight);
+
+  const element00 = fakeSegment("00");
+  els.content.callbacks.get("pointermove")({
+    target: element00, clientX: 200, clientY: 120,
+  });
+  assert.match(tooltip.innerHTML, /00:00–00:59/);
+  assert.match(tooltip.innerHTML, /110 Token/);
+  els.content.callbacks.get("pointerout")({ target: element00, relatedTarget: null });
+  assert.equal(tooltip.classList.contains("is-visible"), false);
+  assert.equal(tooltip.attributes["aria-hidden"], "true");
+
+  // Touch/click can pin a tooltip, and a second click dismisses it.
+  els.content.callbacks.get("click")({ target: element12, clientX: 130, clientY: 120 });
+  assert.equal(tooltip.classList.contains("is-visible"), true);
+  els.content.callbacks.get("pointerout")({ target: element12, relatedTarget: null });
+  assert.equal(tooltip.classList.contains("is-visible"), true);
+  els.content.callbacks.get("click")({ target: element12, clientX: 130, clientY: 120 });
+  assert.equal(tooltip.classList.contains("is-visible"), false);
+});
+
+test("the same model is highlighted from its legend, and rich tooltip escapes model text", async () => {
+  const { els, context } = await boot();
+  els.days.callbacks.get("change")({ target: { value: "today" } });
+  const legend = {
+    dataset: { model: "model-b" },
+    classList: { contains(name) { return name === "trend-legend-item"; } },
+    closest(query) { return query.includes(".trend-legend-item") ? this : null; },
+  };
+  els.content.callbacks.get("pointerover")({ target: legend });
+  assert.equal(runInContext('state.trendActiveModel', context), "model-b");
+  els.content.callbacks.get("pointerout")({ target: legend, relatedTarget: null });
+  assert.equal(runInContext('state.trendActiveModel', context), null);
+  const unknown = { model: '<img src=x onerror="alert(1)">', tokens: 12,
+    usage: { input: 10, cached: 4, output: 2, reasoning: 1 },
+    usd: 0, savedUSD: 0, known: 0, missing: 1 };
+  context.sampleBucket = { key: "12", models: new Map([[unknown.model, unknown]]), tokens: 12, usd: 0 };
+  const tooltip = runInContext('trendTooltipHTML({granularity:"hour",start:"2026-11-23",buckets:[sampleBucket]},"tokens","12",sampleBucket.models.keys().next().value)', context);
+  assert.match(tooltip, /&lt;img/);
+  assert.doesNotMatch(tooltip, /<img src=x/);
 });

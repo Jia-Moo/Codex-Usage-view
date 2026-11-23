@@ -2,6 +2,23 @@
 
 All notable changes are documented here. Versions follow the version in `package.json`.
 
+## [0.5.2] — 2026-11-23
+
+### Added / 新增
+
+- Smooth hover expansion, brightness and shadow feedback on stacked model chart segments.
+- Model-linked highlighting across both charts and their legend swatches.
+- Cursor-following, viewport-constrained floating tooltip with per-period model breakdown: tokens, cached/uncached input, output and reasoning tokens, cache hit ratio, API-equivalent USD cost, estimated cache savings, and share of the period.
+- Keyboard focus and click/tap-to-pin interaction with Escape dismissal.
+- Reduced-motion CSS behavior for accessibility.
+- Tests for precise hover updates, missing-price messaging, tooltip escaping and interaction behavior.
+
+### Notes / 说明
+
+- Presentation-only change; **no modified token accounting, pricing, local index or outbound networking**.
+- User-supplied model text is HTML-escaped before display.
+
+
 ## [0.5.1] — 2026-11-23
 
 ### Changed / 布局改进

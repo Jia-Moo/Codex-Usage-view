@@ -9,10 +9,16 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function element(initialValue = "") {
   const callbacks = new Map();
+  const classes = new Set();
   const el = {
     value: initialValue, dataset: {}, className: "", textContent: "", innerHTML: "",
-    disabled: false, callbacks,
-    classList: { toggle() {}, add() {}, remove() {} },
+    disabled: false, callbacks, attributes: {}, style: {},
+    classList: {
+      toggle(name, force) { if (force ?? !classes.has(name)) classes.add(name); else classes.delete(name); },
+      add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
+      contains(name) { return classes.has(name); },
+    },
+    setAttribute(name, value) { this.attributes[name] = value; },
     addEventListener(type, cb) { callbacks.set(type, cb); },
     get options() {
       return [...this.innerHTML.matchAll(/<option value="([^"]*)"/g)]
@@ -63,6 +69,7 @@ test("project row opens individual model breakdown and back returns to project l
       hidden: true,
       querySelector: () => ({ content: "test-token" }),
       querySelectorAll: () => nav,
+      addEventListener() {},
       getElementById: id => {
         if (!els[id]) els[id] = element();
         return els[id];

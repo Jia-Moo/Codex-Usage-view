@@ -330,11 +330,19 @@ test("background rerenders keep manual history positions while right-aligned cha
 
   // The user drags only Token back; the other chart remains docked to latest.
   scrolls[0].scrollLeft = 180;
-  scrolls[0].scrollWidth = 1280;
-  scrolls[1].scrollWidth = 1160;
   runInContext("render()", context);
   assert.equal(scrolls[0].scrollLeft, 180, "manual history exploration must not jump forward");
-  assert.equal(scrolls[1].scrollLeft, 760, "latest-aligned cost chart follows newly appended data");
+  assert.equal(scrolls[1].scrollLeft, 600);
+
+  // Simulate the browser replacing the previous DOM with wider chart content.
+  // Position capture happens on the OLD DOM before the new scrollWidth exists.
+  const previous = runInContext("snapshotTrendScroll(trendViewKey())", context);
+  scrolls[0].scrollWidth = 1280;
+  scrolls[1].scrollWidth = 1160;
+  context.previous = previous;
+  runInContext("restoreTrendScroll(trendViewKey(), previous)", context);
+  assert.equal(scrolls[0].scrollLeft, 180, "manual history position is preserved on growth");
+  assert.equal(scrolls[1].scrollLeft, 760, "right-aligned cost chart follows new data");
 
   // Switching range resets both chart scrollbars to the most recent period.
   els.days.callbacks.get("change")({ target: { value: "7" } });

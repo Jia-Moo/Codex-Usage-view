@@ -326,7 +326,7 @@ a:hover{color:#172e25}
 }
 .trend-legend-heading{
   text-align:right;
-  font-size:10px;
+  font-size:11px;
   line-height:1.4;
   font-weight:700;
   color:#53695a;
@@ -348,7 +348,7 @@ a:hover{color:#172e25}
   align-items:center;
   gap:5px;
   min-width:0;
-  font-size:10px;
+  font-size:11px;
   color:#46544b;
   line-height:1.4;
   white-space:nowrap;
@@ -364,9 +364,9 @@ a:hover{color:#172e25}
 .trend-legend-share{
   color:#728078;
   font-variant-numeric:tabular-nums;
-  font-size:10px;
+  font-size:11px;
 }
-.trend-legend-share.unpriced{color:#a17e49;font-size:9px}
+.trend-legend-share.unpriced{color:#a17e49;font-size:10px}
 .trend-legend-empty{
   display:inline-block;
   text-align:right;

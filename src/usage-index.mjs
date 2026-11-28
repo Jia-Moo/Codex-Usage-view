@@ -7,11 +7,11 @@ import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-const VERSION = 2;
+const VERSION = 3;
 const SAMPLE_BYTES = 4096;
 export const defaultIndexFile = (root) => {
   const key = createHash("sha256").update(String(root || "default")).digest("hex").slice(0, 14);
-  return join(homedir(), ".codex-usage-view", "usage-index-v2-" + key + ".json");
+  return join(homedir(), ".codex-usage-view", "usage-index-v3-" + key + ".json");
 };
 
 export async function fingerprint(file, size) {
@@ -20,7 +20,13 @@ export async function fingerprint(file, size) {
   try {
     const hash = createHash("sha256");
     hash.update(String(size) + ":");
-    for (const offset of [...new Set([0, Math.max(0, size - SAMPLE_BYTES)])]) {
+    // Check the head, tail and several interior offsets. Combined with
+    // ctime, this catches most in-place rewrites with preserved size/mtime
+    // without rereading multi-GB logs on every refresh.
+    const offsets = [0, .125, .25, .375, .5, .625, .75, .875, 1]
+      .map(fraction => Math.min(Math.max(0, size - SAMPLE_BYTES),
+        Math.floor(size * fraction)));
+    for (const offset of [...new Set(offsets)]) {
       const count = Math.min(SAMPLE_BYTES, Math.max(0, size - offset));
       if (count === 0) continue;
       const buffer = Buffer.allocUnsafe(count);

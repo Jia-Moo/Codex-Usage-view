@@ -85,6 +85,22 @@ node src/server.mjs --hide-titles
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
 
+## v0.6.0: Fork identity and event-level segment reconciliation
+
+The earlier analyzer incorrectly let later `session_meta` records overwrite a rollout's original identity. Forked Codex logs may contain a fork header followed by a copied parent header, silently collapsing distinct sessions. It also selected just one file for repeated session IDs, dropping genuinely independent token-usage segments.
+
+- **Authoritative identity:** the first session header in each file establishes the session ID. Later copied parent headers are recorded only as diagnostics and never replace the fork's identity or working directory.
+- **Event-level merge:** each positive `token_count` event contributes a compact timestamp/counter fingerprint. Exact copies and matching prefixes are deduplicated; provably non-overlapping temporal segments with the same session ID are combined without losing per-model/day/hour cost details.
+- **Conservative overlap handling:** same-ID sources with overlapping intervals but insufficient shared-event evidence are **not blindly summed**. Such conflicts are surfaced in warnings and require further investigation to guarantee a complete count.
+- **Index v3 rebuild:** old v2 indices may encode incorrect session IDs and lack event fingerprints. v0.6.0 builds a new `usage-index-v3-*.json` from existing logs on first launch, preserving older index files but **not importing their untrusted identities**.
+- **Diagnostics:** scan metadata includes detected copied-parent headers, merged independent segments and ambiguous sources.
+- **Safer cache reuse:** unchanged-size/mtime scans now check ctime and sample the head, tail and eight interior file locations. This catches common in-place edits, although it is **not an exhaustive full-file checksum**.
+- **Privacy:** the new local index persists usage-event timestamps, model names, counters and one-way hashes for deduplication. It does not store raw prompts, tool output or project source code and never uploads the index.
+
+**Upgrading:** stop the old process, run `git pull origin main`, then `npm start`. The first v0.6.0 run performs a complete local rebuild. Select **All time**, clear project/model/search filters, and compare totals against an independent log audit. Do not add historical discrepancies as arbitrary fixed token adjustments. Ambiguous overlap warnings need source-level review.
+
+Node.js 22.15+ is still required. No extra npm dependencies. Complete multi-frame Zstandard validation and edge-case concurrent-log write hardening remain future work.
+
 ## v0.5.4: Fix shrinking all-time usage totals
 
 **Root causes:** previous versions only scanned plain `.jsonl` and silently dropped sessions when their source files disappeared or became inaccessible. When several rollouts shared one session ID, the newest file modification time could select a less complete copy.
@@ -192,7 +208,7 @@ The app is deliberately narrow in scope:
 - The HTTP server binds only to **127.0.0.1**; API requests require a per-process random token. Host validation and restrictive browser headers are enabled.
 - The frontend is served locally with **no third-party JavaScript, CDN, external fonts or telemetry SDK**.
 - **No chat logs or project source code are transmitted.** The only optional outbound request retrieves a fixed public LiteLLM price JSON after you click the sync control.
-- The local price file and derived usage index live under `~/.codex-usage-view/`. Statistics from files no longer available may remain in that index until explicitly cleared.
+- The local price file and derived usage index live under `~/.codex-usage-view/`. The v3 index includes per-event usage timestamps/counters and hashes for deduplication; statistics from missing source files can remain until explicitly cleared.
 
 **Privacy detail:** the local index may contain project paths, source log paths, session IDs, model usage and up to **110 characters of the first recognized user message** as a title. Use `--hide-titles` to avoid extracting that text. Do not share the index or unredacted raw logs in public bug reports.
 
@@ -251,7 +267,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.5.4 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.6.0 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

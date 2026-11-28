@@ -2,6 +2,27 @@
 
 All notable changes are documented here. Versions follow the version in `package.json`.
 
+## [0.6.0] — 2026-11-29
+
+### Critical accuracy fixes
+
+- Treat the **first** `session_meta` as authoritative, preventing copied parent headers in forked rollouts from overwriting a fork's own session identity.
+- Replace largest-file-wins session deduplication with **event fingerprint reconciliation**: identical/prefix copies are deduplicated and independent, non-overlapping segments are merged.
+- Report ambiguous same-ID overlapping sources instead of silently double-counting them.
+- Preserve model, local date and hourly usage attribution while combining split sessions.
+- Expose detected copied-parent headers, reconciled segments, duplicate token events and ambiguous source counts for diagnosis.
+- Strengthen cached file validation using ctime and distributed sampled fingerprints.
+- Upgrade local derived usage index to **v3**. The first start scans existing logs again; prior v1/v2 indexes remain untouched and are deliberately not trusted for automatic identity migration.
+- Add regression tests for fork+parent header sequences, time-disjoint segments, duplicate copies, conflicting overlaps, append-resume, and index migration.
+
+### Privacy
+
+The local v3 index stores per-token-event metadata (timestamp/model/usage and hashed counter fingerprint) to prove deduplication. No original conversation text, tool output, source code, or credentials are transmitted or stored in that index.
+
+### Remaining limitations
+
+Ambiguous overlapping sequences and some damaged/multi-frame compressed archives still require manual reconciliation; the application must report unresolved conflicts rather than claim perfect historical completeness.
+
 ## [0.5.4] — 2026-11-29
 
 ### Fixed / 修复

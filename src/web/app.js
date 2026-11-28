@@ -701,6 +701,9 @@ function render() {
     " 组模型/日期用量 · 本次扫描：" + fmt(meta.fullScans || 0) + " 完整，" +
     fmt(meta.resumedFiles || 0) + " 续读，" + fmt(meta.cacheHits || 0) + " 缓存，" +
     fmt(meta.compressedFiles || 0) + " 个压缩归档" +
+    (meta.forkHeadersDetected ? " · 识别 " + fmt(meta.forkHeadersDetected) + " 份分叉日志" : "") +
+    (meta.mergedSegments ? " · 归并 " + fmt(meta.mergedSegments) + " 个独立分段" : "") +
+    (meta.conflictingSources ? " · " + fmt(meta.conflictingSources) + " 份重叠冲突日志" : "") +
     (meta.historicalSessions ? " · " + fmt(meta.historicalSessions) + " 个历史缓存会话" : "");
   renderMetrics(rows);
   let html;

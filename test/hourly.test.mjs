@@ -80,7 +80,7 @@ test("v1 index is rejected and v2 hourly rollups survive cache hits and append-r
   assert.equal(first.fullScans, 1);
   assert.equal(first.sessions[0].hours.length, 1);
   assert.equal(first.sessions[0].usage.input, 100);
-  assert.equal(JSON.parse(await readFile(indexFile, "utf8")).version, 2);
+  assert.equal(JSON.parse(await readFile(indexFile, "utf8")).version, 3);
   const cached = await scanCodex(root, options);
   assert.equal(cached.cacheHits, 1);
   assert.equal(cached.sessions[0].hours.length, 1);

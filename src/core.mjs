@@ -3,6 +3,7 @@
  * resumption without retaining full prompts, tool output, or source code.
  */
 import { opendir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { readJsonl } from "./jsonl-reader.mjs";
 import { defaultIndexFile, fingerprint, loadIndex, saveIndex } from "./usage-index.mjs";
@@ -61,10 +62,11 @@ function freshSession(filePath) {
   return {
     id: sessionIdFromFile(filePath), file: filePath, projectPath: "", project: "未知项目",
     title: "", started: null, lastSeen: null, turns: 0, source: "",
-    buckets: [], hours: [], usage: ZERO(), warnings: 0,
+    buckets: [], hours: [], _events: [], usage: ZERO(), warnings: 0,
     _checkpoint: {
       cursor: 0, previous: null, activeModel: "未知模型", firstTimestamp: null,
       lastTimestamp: null, eventUsers: 0, responseUsers: 0, titleFromUser: false,
+      identityLocked: false, copiedParentIds: [],
     },
   };
 }
@@ -77,6 +79,7 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   session.file = filePath;
   const buckets = new Map((session.buckets || []).map(b => [JSON.stringify([b.model, b.date]), b]));
   const hours = new Map((session.hours || []).map(b => [JSON.stringify([b.model, b.date, b.hour]), b]));
+  const usageEvents = session._events || [];
   const result = await readJsonl(filePath, {
     start: checkpoint.cursor, compressed: filePath.endsWith(".jsonl.zst"), maxLineBytes,
     onRecord(evt) {
@@ -89,10 +92,20 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
       const p = evt.payload;
       if (!isObj(p)) return;
       if (evt.type === "session_meta") {
-        if (typeof p.id === "string" && p.id.length <= 128) session.id = p.id;
-        if (typeof p.cwd === "string") session.projectPath = p.cwd;
-        session.started = iso(p.timestamp) || session.started;
-        session.source = typeof p.source === "string" ? p.source : session.source;
+        // First session header defines this rollout. Forks may include a copied
+        // parent header later in the same JSONL file; never let it overwrite
+        // the fork's own ID, working directory, start time or source.
+        if (!checkpoint.identityLocked) {
+          checkpoint.identityLocked = true;
+          if (typeof p.id === "string" && p.id.length <= 128) session.id = p.id;
+          if (typeof p.cwd === "string") session.projectPath = p.cwd;
+          session.started = iso(p.timestamp) || session.started;
+          session.source = typeof p.source === "string" ? p.source : session.source;
+        } else if (typeof p.id === "string" && p.id !== session.id &&
+                   !checkpoint.copiedParentIds.includes(p.id) &&
+                   checkpoint.copiedParentIds.length < 8) {
+          checkpoint.copiedParentIds.push(p.id);
+        }
         return;
       }
       if (evt.type === "turn_context") {
@@ -140,6 +153,16 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
       // Keep a small derived 24-hour index for accurate per-hour charts.
       // The original event body is never persisted to the usage index.
       const hour = new Date(stamp || session.started).getHours();
+      // Store only usage metadata: event stamp + counters + model. A 128-bit
+      // content fingerprint allows duplicate events across rollout copies to
+      // be merged without keeping private prompts, tool output, or source.
+      const signature = createHash("sha256").update(JSON.stringify([
+        stamp || session.started, current, last,
+      ])).digest("hex").slice(0, 32);
+      usageEvents.push({
+        signature, stamp: stamp || session.started, model, date, hour,
+        usage: delta,
+      });
       const hourKey = JSON.stringify([model, date, hour]);
       const hourly = hours.get(hourKey) || { model, date, hour, usage: ZERO() };
       hourly.usage = addUsage(hourly.usage, delta);
@@ -156,6 +179,7 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   session.buckets = [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date));
   session.hours = [...hours.values()].sort((a, b) =>
     a.date.localeCompare(b.date) || a.hour - b.hour || a.model.localeCompare(b.model));
+  session._events = usageEvents;
   session.usage = session.buckets.reduce((sum, b) => addUsage(sum, b.usage), ZERO());
   session._lineWarnings = result.skippedLongLines;
   return session;
@@ -178,19 +202,126 @@ async function* sessionFiles(path, maxDepth = 5, onError = () => {}) {
     // Symlinks are never followed.
   }
 }
-function preferSession(current, candidate) {
-  if (!current) return candidate;
-  const oldTotal = totalTokens(current.usage);
-  const newTotal = totalTokens(candidate.usage);
-  // Multiple rollout/archived copies may share the same session ID.
-  // Never prefer a newer but incomplete copy solely by its filesystem mtime.
-  if (oldTotal !== newTotal) return newTotal > oldTotal ? candidate : current;
-  if (!!current._historical !== !!candidate._historical)
-    return candidate._historical ? current : candidate;
-  const oldSeen = Date.parse(current.lastSeen || "") || 0;
-  const newSeen = Date.parse(candidate.lastSeen || "") || 0;
-  if (oldSeen !== newSeen) return newSeen > oldSeen ? candidate : current;
-  return (candidate.mtime || 0) > (current.mtime || 0) ? candidate : current;
+function sourceRange(entry) {
+  const events = entry._events || [];
+  if (!events.length) return null;
+  let first = Infinity, last = -Infinity;
+  for (const event of events) {
+    const timestamp = Date.parse(event.stamp || "");
+    if (!Number.isFinite(timestamp)) return null;
+    first = Math.min(first, timestamp);
+    last = Math.max(last, timestamp);
+  }
+  return { first, last };
+}
+function overlapping(a, b) {
+  return a && b && a.first <= b.last && b.first <= a.last;
+}
+
+/**
+ * Reconcile rollout copies by *usage event identity*, not by file mtime,
+ * largest aggregate, or a single session ID alone.
+ *
+ * Exact copied/prefix events have the same timestamp+counter fingerprint.
+ * Disjoint temporal segments contribute their unique calls. Ambiguous
+ * overlapping sequences without shared fingerprints are not blindly added:
+ * retain the most complete source and report a conflict for investigation.
+ */
+function mergeSessionSources(id, entries, warnings, { diagnose = true } = {}) {
+  if (!entries.length) return null;
+  const sources = [...entries].sort((a, b) =>
+    totalTokens(b.usage) - totalTokens(a.usage) ||
+    (a._historical ? 1 : 0) - (b._historical ? 1 : 0) ||
+    (b.mtime || 0) - (a.mtime || 0));
+  const winner = sources[0];
+  const accepted = [];
+  const signatureSet = new Set();
+  const selectedEvents = [];
+  let duplicateEvents = 0, conflictingSources = 0;
+  for (const candidate of sources) {
+    const events = candidate._events || [];
+    if (!events.length) {
+      if (totalTokens(candidate.usage) && diagnose) {
+        warnings.push("会话缺少事件级索引，无法安全合并：" + id.slice(0, 8));
+      }
+      // A single old summary without fingerprints may still be displayed,
+      // but cannot be added to another summary without overcounting.
+      if (!accepted.length) accepted.push(candidate);
+      continue;
+    }
+    const range = sourceRange(candidate);
+    const conflict = accepted.some(existing => {
+      const oldEvents = existing._events || [];
+      if (!oldEvents.length) return false;
+      const oldRange = sourceRange(existing);
+      if (!overlapping(range, oldRange)) return false;
+      const oldSignatures = new Set(oldEvents.map(event => event.signature));
+      // Shared usage events prove that we have overlapping *copies* and can
+      // safely union their distinct suffixes. Without shared calls, an
+      // overlapping time span is ambiguous: don't silently double count it.
+      if (!events.some(event => oldSignatures.has(event.signature))) return true;
+      const oldByTimestamp = new Map();
+      for (const previous of oldEvents) {
+        const fingerprints = oldByTimestamp.get(previous.stamp) || new Set();
+        fingerprints.add(previous.signature);
+        oldByTimestamp.set(previous.stamp, fingerprints);
+      }
+      return events.some(event => {
+        const atTime = oldByTimestamp.get(event.stamp);
+        return atTime && !atTime.has(event.signature);
+      });
+    });
+    if (conflict) {
+      conflictingSources++;
+      if (diagnose) warnings.push("同 ID 会话存在有冲突的重叠日志，未盲目相加：" +
+        id.slice(0, 8) + "（请检查日志分段与累计计数）");
+      continue;
+    }
+    let newEvents = 0;
+    for (const event of events) {
+      if (signatureSet.has(event.signature)) { duplicateEvents++; continue; }
+      signatureSet.add(event.signature);
+      selectedEvents.push(event);
+      newEvents++;
+    }
+    if (newEvents) accepted.push(candidate);
+  }
+  const result = structuredClone(winner);
+  const buckets = new Map(), hours = new Map();
+  for (const event of selectedEvents) {
+    const dailyKey = JSON.stringify([event.model, event.date]);
+    const bucket = buckets.get(dailyKey) || { model: event.model, date: event.date, usage: ZERO() };
+    bucket.usage = addUsage(bucket.usage, event.usage);
+    buckets.set(dailyKey, bucket);
+    const hourlyKey = JSON.stringify([event.model, event.date, event.hour]);
+    const hourly = hours.get(hourlyKey) || {
+      model: event.model, date: event.date, hour: event.hour, usage: ZERO(),
+    };
+    hourly.usage = addUsage(hourly.usage, event.usage);
+    hours.set(hourlyKey, hourly);
+  }
+  if (selectedEvents.length) {
+    result.buckets = [...buckets.values()].sort((a, b) =>
+      a.date.localeCompare(b.date) || a.model.localeCompare(b.model));
+    result.hours = [...hours.values()].sort((a, b) =>
+      a.date.localeCompare(b.date) || a.hour - b.hour || a.model.localeCompare(b.model));
+    result.usage = result.buckets.reduce((acc, bucket) => addUsage(acc, bucket.usage), ZERO());
+  }
+  // Metadata is approximate across several disjoint fragments. Usage is
+  // reconciled exactly at the event level.
+  result.started = accepted.map(s => s.started).filter(Boolean).sort()[0] || result.started;
+  result.lastSeen = accepted.map(s => s.lastSeen).filter(Boolean).sort().at(-1) || result.lastSeen;
+  result.turns = accepted.reduce((n, item) => n + (item.turns || 0), 0);
+  result._historical = accepted.some(item => !!item._historical);
+  result.sourceFiles = sources.length;
+  result.segmentsMerged = Math.max(0, accepted.length - 1);
+  result.duplicateEventsRemoved = duplicateEvents;
+  result.conflictingSources = conflictingSources;
+  delete result._events; // Never send or retain event fingerprints in the UI summary.
+  if (diagnose && accepted.length > 1) {
+    warnings.push("同 ID 会话已归并 " + accepted.length + " 个有独立用量的分段：" + id.slice(0, 8));
+  }
+  return result;
 }
 
 /**
@@ -216,9 +347,15 @@ export async function scanCodex(root, {
   }
   const nextIndex = {};
   const folders = [join(root, "sessions"), join(root, "archived_sessions")];
-  const sessions = new Map();
+  const sessionSources = new Map();
+  const addSource = entry => {
+    const sources = sessionSources.get(entry.id) || [];
+    sources.push(entry);
+    sessionSources.set(entry.id, sources);
+  };
   let filesSeen = 0, filesParsed = 0, malformedLines = 0;
   let cacheHits = 0, resumedFiles = 0, fullScans = 0, indexedBytes = 0, compressedFiles = 0;
+  let forkHeadersDetected = 0;
   let reachedLimit = false;
   for (const folder of folders) {
     if (reachedLimit) break;
@@ -239,7 +376,9 @@ export async function scanCodex(root, {
       const previous = oldIndex[file];
       let entry, mode = "full";
       try {
-        if (previous && previous.size === meta.size && previous.mtimeMs === meta.mtimeMs &&
+        if (previous && previous.size === meta.size &&
+          previous.mtimeMs === meta.mtimeMs && previous.ctimeMs === meta.ctimeMs &&
+          previous.fingerprint === await fingerprint(file, meta.size) &&
           previous.session?._checkpoint && Number.isSafeInteger(previous.session._checkpoint.cursor)) {
           entry = structuredClone(previous.session);
           mode = "cache";
@@ -257,7 +396,8 @@ export async function scanCodex(root, {
         const now = await stat(file);
         // A file can still change during scanning. Do not persist a cursor for
         // an unstable file; the next scan will perform a complete reparse.
-        if (now.size !== meta.size || now.mtimeMs !== meta.mtimeMs) {
+        if (now.size !== meta.size || now.mtimeMs !== meta.mtimeMs ||
+            now.ctimeMs !== meta.ctimeMs) {
           warnings.push("日志扫描过程中发生变化，下次将重新校验：" + basename(file));
           // Preserve the previous stable entry if one exists.
           if (previous?.session) {
@@ -272,7 +412,7 @@ export async function scanCodex(root, {
         entry.mtime = now.mtimeMs;
         delete entry._historical;
         const signature = mode === "cache" && previous && now.size === previous.size &&
-          now.mtimeMs === previous.mtimeMs
+          now.mtimeMs === previous.mtimeMs && now.ctimeMs === previous.ctimeMs
           ? previous.fingerprint : await fingerprint(file, now.size);
         // Unstable new files are counted in this view, but must be reparsed
         // next time. The cache stores an invalid mtime to force that.
@@ -288,10 +428,11 @@ export async function scanCodex(root, {
         }
         nextIndex[file] = {
           size: now.size, mtimeMs: entry._unstable ? -1 : now.mtimeMs,
-          fingerprint: signature, session: entry,
+          ctimeMs: now.ctimeMs, fingerprint: signature, session: entry,
           ...(displayEntry !== entry ? { highWaterSession: displayEntry } : {}),
         };
         filesParsed++;
+        if (displayEntry._checkpoint?.copiedParentIds?.length) forkHeadersDetected++;
         if (compressed) compressedFiles++;
         if (mode === "cache") cacheHits++;
         else if (mode === "resume") resumedFiles++;
@@ -300,7 +441,7 @@ export async function scanCodex(root, {
         if (entry._lineWarnings) warnings.push(
           "跳过 " + entry._lineWarnings + " 行超过 " + Math.round(maxLineBytes / (1024 * 1024)) +
           " MiB 的超长记录：" + basename(file));
-        sessions.set(displayEntry.id, preferSession(sessions.get(displayEntry.id), displayEntry));
+        addSource(displayEntry);
       } catch (error) {
         warnings.push("无法读取 " + basename(file) + "：" + String(error.message || error));
       }
@@ -317,15 +458,9 @@ export async function scanCodex(root, {
       historical.file = file;
       // This can be a moved/archived duplicate. Reuse the more complete
       // session but do not double-count both copies.
-      const live = sessions.get(historical.id);
-      if (live && !live._historical &&
-        totalTokens(live.usage) >= totalTokens(historical.usage)) {
-        continue;
-      }
       nextIndex[file] = { ...cached, session: historical, missing: true };
-      const winner = preferSession(live, historical);
-      sessions.set(historical.id, winner);
-      if (winner === historical && (!live || !live._historical)) missingSessions++;
+      addSource(historical);
+      missingSessions++;
     }
   }
   if (missingSessions) warnings.push(
@@ -335,15 +470,21 @@ export async function scanCodex(root, {
     try { await saveIndex(indexFile, { root, showTitles, timeZone, entries: nextIndex }); }
     catch (error) { warnings.push("无法保存本地统计索引：" + String(error.message || error)); }
   }
-  const sorted = [...sessions.values()].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || ""));
+  const sorted = [...sessionSources.entries()].map(([id, entries]) =>
+    mergeSessionSources(id, entries, warnings)).sort((a, b) =>
+    (b.lastSeen || "").localeCompare(a.lastSeen || ""));
   const previousBySession = new Map();
   for (const cached of Object.values(oldIndex)) {
-    const session = cached?.highWaterSession || cached?.session;
-    if (session?.id) previousBySession.set(session.id,
-      preferSession(previousBySession.get(session.id), session));
+    const entry = cached?.highWaterSession || cached?.session;
+    if (entry?.id) {
+      const sources = previousBySession.get(entry.id) || [];
+      sources.push(entry);
+      previousBySession.set(entry.id, sources);
+    }
   }
-  const previousTotalTokens = [...previousBySession.values()].reduce(
-    (sum, session) => sum + totalTokens(session.usage), 0);
+  const previousTotalTokens = [...previousBySession.entries()].reduce(
+    (sum, [id, entries]) => sum + totalTokens(
+      mergeSessionSources(id, entries, [], { diagnose: false })?.usage), 0);
   const currentTotalTokens = sorted.reduce(
     (sum, session) => sum + totalTokens(session.usage), 0);
   if (previousTotalTokens && currentTotalTokens < previousTotalTokens) {
@@ -358,6 +499,10 @@ export async function scanCodex(root, {
     previousTotalTokens, currentTotalTokens,
     malformedLines, warnings: warnings.slice(0, 40),
     cacheHits, resumedFiles, fullScans, indexedBytes, compressedFiles,
+    forkHeadersDetected,
+    mergedSegments: sorted.reduce((n, entry) => n + (entry.segmentsMerged || 0), 0),
+    conflictingSources: sorted.reduce((n, entry) => n + (entry.conflictingSources || 0), 0),
+    duplicateEventsRemoved: sorted.reduce((n, entry) => n + (entry.duplicateEventsRemoved || 0), 0),
     missingFiles, historicalSessions: sorted.filter(s => s._historical).length,
     sessions: sorted,
   };
@@ -391,6 +536,9 @@ export function priceReport(snapshot, prices) {
     started: entry.started, lastSeen: entry.lastSeen, turns: entry.turns,
     source: entry.source, usage: entry.usage, warnings: entry.warnings,
     historical: !!entry._historical,
+    sourceFiles: entry.sourceFiles || 1,
+    segmentsMerged: entry.segmentsMerged || 0,
+    conflictingSources: entry.conflictingSources || 0,
     buckets: entry.buckets.map(bucket => ({
       ...bucket, pricing: calculateCost(bucket.usage, bucket.model, prices),
     })),
@@ -408,6 +556,10 @@ export function priceReport(snapshot, prices) {
       compressedFiles: snapshot.compressedFiles ?? 0,
       historicalSessions: snapshot.historicalSessions ?? 0,
       missingFiles: snapshot.missingFiles ?? 0,
+      forkHeadersDetected: snapshot.forkHeadersDetected ?? 0,
+      mergedSegments: snapshot.mergedSegments ?? 0,
+      conflictingSources: snapshot.conflictingSources ?? 0,
+      duplicateEventsRemoved: snapshot.duplicateEventsRemoved ?? 0,
       previousTotalTokens: snapshot.previousTotalTokens ?? null,
       currentTotalTokens: snapshot.currentTotalTokens ?? null,
     }, sessions,

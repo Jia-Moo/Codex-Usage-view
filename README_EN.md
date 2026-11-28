@@ -93,7 +93,7 @@ If Codex CLI, Codex App, and/or WSL use different data directories, point the sc
 - **Retain disappeared-source history locally** and mark it as **historical cache**, rather than silently subtracting it from all-time totals. A reappearing or complete compressed copy can replace this cache.
 - **Prefer the more complete duplicate** when several files share one session ID; do not add duplicate copies together.
 - **Flag truncation or replacement** when a file's recomputed usage is lower than its prior cached value. Retain the last-known higher total with a warning until new data overtakes it.
-- **Surface diagnostics** for inaccessible session directories and files, compressed archive counts, and historical cached sessions.
+- **Surface diagnostics** for inaccessible directories and files, compressed archive counts, historical cached sessions, and unexpected drops versus the previous indexed all-time token total.
 - **Explicitly forget missing history** by stopping the app and running `node src/server.mjs --drop-missing`. This removes derived summaries whose original files are absent (and historical high-water values for replaced files) without touching Codex's original logs.
 
 **Privacy:** local `~/.codex-usage-view/usage-index-v2-*.json` files can retain historical statistics, project paths, session IDs and optional short user-message titles *after the original rollout is deleted*. Delete the local index files to erase this derived history and force a full rescan. These files are never uploaded by this app.

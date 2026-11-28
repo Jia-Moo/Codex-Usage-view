@@ -75,6 +75,8 @@ test("missing-source summaries remain locally with an explicit warning and may b
   assert.equal(second.sessions[0].usage.input, 501);
   assert.equal(second.sessions[0]._historical, true);
   assert.equal(second.historicalSessions, 1);
+  assert.equal(second.previousTotalTokens, 576);
+  assert.equal(second.currentTotalTokens, 576);
   assert.match(second.warnings.join(" "), /历史会话/);
   const cached = await scanCodex(root, options(root));
   assert.equal(cached.sessions[0].usage.input, 501);
@@ -83,6 +85,9 @@ test("missing-source summaries remain locally with an explicit warning and may b
   const onlyPresent = await scanCodex(root, { ...options(root), keepMissing: false });
   assert.equal(onlyPresent.sessions.length, 0);
   assert.equal(onlyPresent.historicalSessions, 0);
+  assert.equal(onlyPresent.previousTotalTokens, 576);
+  assert.equal(onlyPresent.currentTotalTokens, 0);
+  assert.match(onlyPresent.warnings.join(" "), /总 Token 比上次本机索引减少/);
   assert.equal(Object.keys(JSON.parse(await readFile(join(root, "stat-cache.json"), "utf8")).entries).length, 0);
   await rename(moved, file);
   const restored = await scanCodex(root, options(root));

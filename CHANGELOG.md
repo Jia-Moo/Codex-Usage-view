@@ -11,7 +11,7 @@ All notable changes are documented here. Versions follow the version in `package
 - Retain missing-source derived totals locally and mark them as historical cache instead of silently removing sessions.
 - Choose the most complete duplicate rollout for a session ID instead of blindly choosing the newest file modification timestamp.
 - Flag session rollback/truncation and retain the last-known usage high watermark, with explicit warnings.
-- Warn about unreadable source folders, missing scans and log-level read errors.
+- Warn about unreadable source folders, missing scans and log-level read errors, and detect all-time token total regressions against the prior local index.
 - Add `--drop-missing` to deliberately purge unavailable-source cached history.
 - Add regression tests for compression, archive movement, missing-source retention, duplicate copies and overwritten logs.
 

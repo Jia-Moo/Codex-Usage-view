@@ -336,10 +336,26 @@ export async function scanCodex(root, {
     catch (error) { warnings.push("无法保存本地统计索引：" + String(error.message || error)); }
   }
   const sorted = [...sessions.values()].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || ""));
+  const previousBySession = new Map();
+  for (const cached of Object.values(oldIndex)) {
+    const session = cached?.highWaterSession || cached?.session;
+    if (session?.id) previousBySession.set(session.id,
+      preferSession(previousBySession.get(session.id), session));
+  }
+  const previousTotalTokens = [...previousBySession.values()].reduce(
+    (sum, session) => sum + totalTokens(session.usage), 0);
+  const currentTotalTokens = sorted.reduce(
+    (sum, session) => sum + totalTokens(session.usage), 0);
+  if (previousTotalTokens && currentTotalTokens < previousTotalTokens) {
+    warnings.push("完整时间范围总 Token 比上次本机索引减少 " +
+      (previousTotalTokens - currentTotalTokens).toLocaleString("zh-CN") +
+      "，请检查是否主动清理历史缓存、切换数据目录或出现解析错误。");
+  }
   if (!filesSeen && !sorted.length) warnings.push(
     "未找到可统计的 Codex 会话日志。请检查 CODEX_HOME、sessions/ 和 archived_sessions/ 路径。");
   return {
     root, scannedAt: new Date().toISOString(), filesSeen, filesParsed,
+    previousTotalTokens, currentTotalTokens,
     malformedLines, warnings: warnings.slice(0, 40),
     cacheHits, resumedFiles, fullScans, indexedBytes, compressedFiles,
     missingFiles, historicalSessions: sorted.filter(s => s._historical).length,
@@ -392,6 +408,8 @@ export function priceReport(snapshot, prices) {
       compressedFiles: snapshot.compressedFiles ?? 0,
       historicalSessions: snapshot.historicalSessions ?? 0,
       missingFiles: snapshot.missingFiles ?? 0,
+      previousTotalTokens: snapshot.previousTotalTokens ?? null,
+      currentTotalTokens: snapshot.currentTotalTokens ?? null,
     }, sessions,
   };
 }

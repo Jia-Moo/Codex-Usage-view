@@ -14,14 +14,15 @@ const LOCAL_TOKEN = randomBytes(32).toString("hex");
 const MIME = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8" };
 
 function options(argv) {
-  const out = { root: process.env.CODEX_HOME || join(homedir(), ".codex"), port: 0, showTitles: true, open: true };
+  const out = { root: process.env.CODEX_HOME || join(homedir(), ".codex"), port: 0, showTitles: true, open: true, keepMissing: true };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--root") out.root = argv[++i] || out.root;
     else if (argv[i] === "--port") out.port = Number(argv[++i]);
     else if (argv[i] === "--no-browser") out.open = false;
     else if (argv[i] === "--hide-titles") out.showTitles = false;
+    else if (argv[i] === "--drop-missing") out.keepMissing = false;
     else if (argv[i] === "--help" || argv[i] === "-h") {
-      console.log("Codex Usage View\n  node src/server.mjs [--root C:\\Users\\you\\.codex] [--port 0] [--no-browser] [--hide-titles]");
+      console.log("Codex Usage View\n  node src/server.mjs [--root C:\\Users\\you\\.codex] [--port 0] [--no-browser] [--hide-titles] [--drop-missing]");
       process.exit(0);
     } else throw new Error("未知参数：" + argv[i]);
   }
@@ -72,7 +73,9 @@ export async function startServer(config = options(process.argv.slice(2))) {
   async function snapshot(force = false) {
     if (!force && scan && Date.now() - scanAt < 20_000) return scan;
     if (inFlight) return inFlight;
-    inFlight = scanCodex(config.root, { showTitles: config.showTitles });
+    inFlight = scanCodex(config.root, {
+      showTitles: config.showTitles, keepMissing: config.keepMissing !== false,
+    });
     try { scan = await inFlight; scanAt = Date.now(); return scan; }
     finally { inFlight = null; }
   }

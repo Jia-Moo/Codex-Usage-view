@@ -2,6 +2,23 @@
 
 All notable changes are documented here. Versions follow the version in `package.json`.
 
+## [0.5.4] — 2026-11-29
+
+### Fixed / 修复
+
+- Fix shrinking "All time" usage when older Codex rollout logs are compressed into `.jsonl.zst` or move out of the scanned folders.
+- Parse compressed Zstandard JSONL files with streaming Node.js native decompression (Node 22.15+); reparse changed archives, cache unchanged ones.
+- Retain missing-source derived totals locally and mark them as historical cache instead of silently removing sessions.
+- Choose the most complete duplicate rollout for a session ID instead of blindly choosing the newest file modification timestamp.
+- Flag session rollback/truncation and retain the last-known usage high watermark, with explicit warnings.
+- Warn about unreadable source folders, missing scans and log-level read errors.
+- Add `--drop-missing` to deliberately purge unavailable-source cached history.
+- Add regression tests for compression, archive movement, missing-source retention, duplicate copies and overwritten logs.
+
+### Privacy / 隐私
+
+Local derived-index data may now remain after original JSONL files disappear. It contains session identifiers, project paths, and optional short titles. Users can purge it via `--drop-missing` or by deleting local index files. **No remote upload of these records is introduced.**
+
 ## [0.5.3] — 2026-11-23
 
 ### Changed / 优化

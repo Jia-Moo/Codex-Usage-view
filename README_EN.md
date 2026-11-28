@@ -43,11 +43,11 @@ Codex Usage View answers these questions by parsing the logs already stored on y
 
 ## Quick start
 
-**Requirements:** Node.js **22 or later**, a current browser, and existing Codex JSONL session files. The project uses Node.js built-in modules only; **no `npm install` or API key is required.**
+**Requirements:** Node.js **22.15.0 or later**, a current browser, and existing Codex JSONL session files. The project uses Node.js built-in modules only; **no `npm install` or API key is required.**
 
 ### Windows
 
-1. Install [Node.js 22+](https://nodejs.org/) if it is not already present. Check with `node -v`.
+1. Install [Node.js 22.15+](https://nodejs.org/) if it is not already present. Check with `node -v`.
 2. Click **Code → Download ZIP** on this repository and extract it.
 3. Double-click **`start_windows.cmd`** to launch the local dashboard.
 4. Press Ctrl+C in the command window to stop the app.
@@ -72,7 +72,7 @@ The application binds to a random port on **127.0.0.1** and attempts to open the
 
 ### Choose your Codex log directory
 
-By default the app uses `CODEX_HOME`, or `~/.codex` if that environment variable is not defined. It scans the `sessions/` and `archived_sessions/` directories recursively for `.jsonl` logs.
+By default the app uses `CODEX_HOME`, or `~/.codex` if that environment variable is not defined. It scans the `sessions/` and `archived_sessions/` directories recursively for `.jsonl` and `.jsonl.zst` logs.
 
 ~~~powershell
 node src/server.mjs --root "C:\Users\YourName\.codex"
@@ -84,6 +84,22 @@ node src/server.mjs --hide-titles
 ~~~
 
 If Codex CLI, Codex App, and/or WSL use different data directories, point the scanner to the actual directory you want to analyze.
+
+## v0.5.4: Fix shrinking all-time usage totals
+
+**Root causes:** previous versions only scanned plain `.jsonl` and silently dropped sessions when their source files disappeared or became inaccessible. When several rollouts shared one session ID, the newest file modification time could select a less complete copy.
+
+- **Read archived `.jsonl.zst` files** using Node.js built-in Zstandard streaming decompression, alongside `.jsonl` in both active and archived session directories. Compressed files are reused from the derived index when unchanged and fully reparsed when changed.
+- **Retain disappeared-source history locally** and mark it as **historical cache**, rather than silently subtracting it from all-time totals. A reappearing or complete compressed copy can replace this cache.
+- **Prefer the more complete duplicate** when several files share one session ID; do not add duplicate copies together.
+- **Flag truncation or replacement** when a file's recomputed usage is lower than its prior cached value. Retain the last-known higher total with a warning until new data overtakes it.
+- **Surface diagnostics** for inaccessible session directories and files, compressed archive counts, and historical cached sessions.
+- **Explicitly forget missing history** by stopping the app and running `node src/server.mjs --drop-missing`. This removes derived summaries whose original files are absent (and historical high-water values for replaced files) without touching Codex's original logs.
+
+**Privacy:** local `~/.codex-usage-view/usage-index-v2-*.json` files can retain historical statistics, project paths, session IDs and optional short user-message titles *after the original rollout is deleted*. Delete the local index files to erase this derived history and force a full rescan. These files are never uploaded by this app.
+
+**Requirement:** Node.js **22.15.0+** (Node 24 recommended). The built-in Zstandard API is still marked experimental in the Node 22 documentation. Actual ChatGPT subscriber charges cannot be derived from these statistics.
+
 
 ## v0.5.3: Show the latest timeline periods by default
 
@@ -165,18 +181,18 @@ Unlike early versions that skipped files larger than 48 MiB, the current version
 4. Resumes from the last completed record when logs grow.
 5. Invalidates the cached summary if the underlying file is rewritten or truncated.
 
-The first scan must still read all historical data. Subsequent scans are faster when files are unchanged or append-only. Current support covers **plain `.jsonl` only**, not compressed `.jsonl.zst` archives.
+The first scan must still read all historical data. Subsequent scans are faster when files are unchanged or append-only. Both plain `.jsonl` and Zstandard-compressed `.jsonl.zst` are supported. Compressed files are fully reparsed when changed but cached when unchanged.
 
 ## Security and privacy
 
 The app is deliberately narrow in scope:
 
-- Only Codex `sessions/**/*.jsonl` and `archived_sessions/**/*.jsonl` are read; log files are not modified.
+- Only Codex `.jsonl` and `.jsonl.zst` session logs in `sessions/` and `archived_sessions/` are read; log files are not modified.
 - It does **not** open `auth.json`, `config.toml`, account credentials or browser cookies.
 - The HTTP server binds only to **127.0.0.1**; API requests require a per-process random token. Host validation and restrictive browser headers are enabled.
 - The frontend is served locally with **no third-party JavaScript, CDN, external fonts or telemetry SDK**.
 - **No chat logs or project source code are transmitted.** The only optional outbound request retrieves a fixed public LiteLLM price JSON after you click the sync control.
-- The local price file and derived usage index live under `~/.codex-usage-view/`.
+- The local price file and derived usage index live under `~/.codex-usage-view/`. Statistics from files no longer available may remain in that index until explicitly cleared.
 
 **Privacy detail:** the local index may contain project paths, source log paths, session IDs, model usage and up to **110 characters of the first recognized user message** as a title. Use `--hide-titles` to avoid extracting that text. Do not share the index or unredacted raw logs in public bug reports.
 
@@ -235,7 +251,7 @@ Stop the app, run `git pull origin main`, and start it again. ZIP users can down
 - [ ] Signed Windows native installer
 - [ ] Optional dark theme and localization
 
-The project is at **v0.5.3 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
+The project is at **v0.5.4 (early release)**. It should not be treated as a financial accounting system or a definitive subscription usage record.
 
 ## Contributing, license, credits
 

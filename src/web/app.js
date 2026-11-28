@@ -699,7 +699,9 @@ function render() {
   const meta = state.report.meta || {};
   $("subtitle").textContent = fmt(active.sessions) + " 个会话 · " + fmt(rows.length) +
     " 组模型/日期用量 · 本次扫描：" + fmt(meta.fullScans || 0) + " 完整，" +
-    fmt(meta.resumedFiles || 0) + " 续读，" + fmt(meta.cacheHits || 0) + " 缓存";
+    fmt(meta.resumedFiles || 0) + " 续读，" + fmt(meta.cacheHits || 0) + " 缓存，" +
+    fmt(meta.compressedFiles || 0) + " 个压缩归档" +
+    (meta.historicalSessions ? " · " + fmt(meta.historicalSessions) + " 个历史缓存会话" : "");
   renderMetrics(rows);
   let html;
   if (state.page === "overview") html = renderOverview(rows);

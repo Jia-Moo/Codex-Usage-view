@@ -6,13 +6,18 @@
  * beginning and processes it exactly once when its newline arrives.
  */
 import { createReadStream } from "node:fs";
+import { createZstdDecompress } from "node:zlib";
 
 export async function readJsonl(filePath, {
   start = 0,
+  compressed = false,
   maxLineBytes = 32 * 1024 * 1024,
   onRecord,
 } = {}) {
   if (!Number.isSafeInteger(start) || start < 0) throw new Error("Invalid JSONL cursor");
+  // Zstd is not seekable by raw byte offset; compressed rollouts are reparsed
+  // only when they change, and reused from the derived index when unchanged.
+  if (compressed && start !== 0) throw new Error("Cannot resume a compressed JSONL stream");
   if (typeof onRecord !== "function") throw new Error("onRecord is required");
   let position = start;
   let cursor = start;
@@ -22,7 +27,15 @@ export async function readJsonl(filePath, {
   let skippedLongLines = 0;
   let malformedLines = 0;
   let records = 0;
-  const stream = createReadStream(filePath, { start, highWaterMark: 256 * 1024 });
+  const source = createReadStream(filePath, compressed
+    ? { highWaterMark: 256 * 1024 }
+    : { start, highWaterMark: 256 * 1024 });
+  if (compressed && typeof createZstdDecompress !== "function") {
+    source.destroy();
+    throw new Error("Node.js 22.15+ is required to read .jsonl.zst files");
+  }
+  const stream = compressed ? source.pipe(createZstdDecompress()) : source;
+  if (compressed) source.on("error", error => stream.destroy(error));
   for await (const chunk of stream) {
     let at = 0;
     while (at < chunk.length) {

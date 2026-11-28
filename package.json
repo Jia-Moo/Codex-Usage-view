@@ -1,17 +1,18 @@
 {
   "name": "codex-usage-view",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "type": "module",
   "description": "Local-first Codex analytics with hourly model-stacked token and API-cost trends, cache insights, and per-project/session breakdowns.",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test",
     "start:private": "node src/server.mjs --hide-titles",
-    "check": "node --check src/server.mjs && node --check src/core.mjs && node --check src/jsonl-reader.mjs && node --check src/usage-index.mjs && node --check src/pricing.mjs && node --check src/web/app.js"
+    "check": "node --check src/server.mjs && node --check src/core.mjs && node --check src/jsonl-reader.mjs && node --check src/usage-index.mjs && node --check src/pricing.mjs && node --check src/web/app.js",
+    "start:drop-missing": "node src/server.mjs --drop-missing"
   },
   "license": "MIT",
   "repository": {

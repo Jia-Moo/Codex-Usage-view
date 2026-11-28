@@ -37,7 +37,8 @@ function deltaFrom(previous, current) {
   return Object.fromEntries(METRICS.map(k => [k, Math.max(0, current[k] - previous[k])]));
 }
 function sessionIdFromFile(path) {
-  return basename(path).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1] || basename(path, ".jsonl");
+  return basename(path).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/i)?.[1]
+    || basename(path).replace(/\.jsonl(?:\.zst)?$/i, "");
 }
 function projectLabel(path) {
   if (!path) return "未知项目";
@@ -77,7 +78,7 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   const buckets = new Map((session.buckets || []).map(b => [JSON.stringify([b.model, b.date]), b]));
   const hours = new Map((session.hours || []).map(b => [JSON.stringify([b.model, b.date, b.hour]), b]));
   const result = await readJsonl(filePath, {
-    start: checkpoint.cursor, maxLineBytes,
+    start: checkpoint.cursor, compressed: filePath.endsWith(".jsonl.zst"), maxLineBytes,
     onRecord(evt) {
       if (!isObj(evt)) return;
       const stamp = iso(evt.timestamp);
@@ -160,21 +161,49 @@ export async function parseSession(filePath, { showTitles = false, maxLineBytes 
   return session;
 }
 
-async function* sessionFiles(path, maxDepth = 5) {
+async function* sessionFiles(path, maxDepth = 5, onError = () => {}) {
   if (maxDepth < 0) return;
   let dir;
-  try { dir = await opendir(path); } catch { return; }
+  try { dir = await opendir(path); }
+  catch (error) {
+    if (error.code !== "ENOENT") onError("无法打开目录：" + path + "（" + error.message + "）");
+    return;
+  }
   for await (const entry of dir) {
     const full = join(path, entry.name);
-    if (entry.isDirectory()) yield* sessionFiles(full, maxDepth - 1);
-    else if (entry.isFile() && entry.name.endsWith(".jsonl")) yield full;
+    if (entry.isDirectory()) yield* sessionFiles(full, maxDepth - 1, onError);
+    else if (entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst"))) {
+      yield full;
+    }
+    // Symlinks are never followed.
   }
 }
+function preferSession(current, candidate) {
+  if (!current) return candidate;
+  const oldTotal = totalTokens(current.usage);
+  const newTotal = totalTokens(candidate.usage);
+  // Multiple rollout/archived copies may share the same session ID.
+  // Never prefer a newer but incomplete copy solely by its filesystem mtime.
+  if (oldTotal !== newTotal) return newTotal > oldTotal ? candidate : current;
+  if (!!current._historical !== !!candidate._historical)
+    return candidate._historical ? current : candidate;
+  const oldSeen = Date.parse(current.lastSeen || "") || 0;
+  const newSeen = Date.parse(candidate.lastSeen || "") || 0;
+  if (oldSeen !== newSeen) return newSeen > oldSeen ? candidate : current;
+  return (candidate.mtime || 0) > (current.mtime || 0) ? candidate : current;
+}
 
-/** Cache unchanged files and resume growing files at the last full JSONL record. */
+/**
+ * Scans available Codex JSONL and compressed JSONL archives.
+ *
+ * A historical session is not silently deleted when a source file becomes
+ * unavailable. Derived usage is retained locally, *flagged as historical*,
+ * and exposed in the report for audit. Pass keepMissing=false to intentionally
+ * drop unavailable-source summaries from the local index.
+ */
 export async function scanCodex(root, {
   showTitles = false, maxFiles = 60000, maxLineBytes = 32 * 1024 * 1024,
-  indexFile = undefined,
+  indexFile = undefined, keepMissing = true,
 } = {}) {
   root = resolve(root);
   if (indexFile === undefined) indexFile = defaultIndexFile(root);
@@ -182,28 +211,39 @@ export async function scanCodex(root, {
   let oldIndex = {};
   const warnings = [];
   try { if (indexFile) oldIndex = await loadIndex(indexFile, { root, showTitles, timeZone }); }
-  catch (error) { warnings.push("无法读取本地统计索引，将重新扫描：" + String(error.message || error)); }
+  catch (error) {
+    warnings.push("无法读取本地统计索引，将重新扫描：" + String(error.message || error));
+  }
   const nextIndex = {};
   const folders = [join(root, "sessions"), join(root, "archived_sessions")];
   const sessions = new Map();
   let filesSeen = 0, filesParsed = 0, malformedLines = 0;
-  let cacheHits = 0, resumedFiles = 0, fullScans = 0, indexedBytes = 0;
+  let cacheHits = 0, resumedFiles = 0, fullScans = 0, indexedBytes = 0, compressedFiles = 0;
   let reachedLimit = false;
   for (const folder of folders) {
     if (reachedLimit) break;
-    for await (const file of sessionFiles(folder)) {
+    for await (const file of sessionFiles(folder, 5, msg => warnings.push(msg))) {
       filesSeen++;
-      if (filesSeen > maxFiles) { warnings.push("文件数量超过扫描上限，其他文件暂未扫描"); reachedLimit = true; break; }
+      if (filesSeen > maxFiles) {
+        warnings.push("文件数量超过扫描上限，使用上次保留的历史摘要补全未扫描文件");
+        reachedLimit = true;
+        break;
+      }
       let meta;
-      try { meta = await stat(file); } catch { continue; }
+      try { meta = await stat(file); }
+      catch (error) {
+        warnings.push("无法获取日志信息：" + basename(file) + "（" + error.message + "）");
+        continue;
+      }
+      const compressed = file.endsWith(".jsonl.zst");
       const previous = oldIndex[file];
       let entry, mode = "full";
       try {
         if (previous && previous.size === meta.size && previous.mtimeMs === meta.mtimeMs &&
           previous.session?._checkpoint && Number.isSafeInteger(previous.session._checkpoint.cursor)) {
-          entry = previous.session;
+          entry = structuredClone(previous.session);
           mode = "cache";
-        } else if (previous && previous.size < meta.size && previous.size >= 0 &&
+        } else if (!compressed && previous && previous.size < meta.size && previous.size >= 0 &&
           previous.session?._checkpoint &&
           previous.session._checkpoint.cursor <= previous.size &&
           previous.fingerprint === await fingerprint(file, previous.size)) {
@@ -215,11 +255,44 @@ export async function scanCodex(root, {
           indexedBytes += meta.size;
         }
         const now = await stat(file);
+        // A file can still change during scanning. Do not persist a cursor for
+        // an unstable file; the next scan will perform a complete reparse.
+        if (now.size !== meta.size || now.mtimeMs !== meta.mtimeMs) {
+          warnings.push("日志扫描过程中发生变化，下次将重新校验：" + basename(file));
+          // Preserve the previous stable entry if one exists.
+          if (previous?.session) {
+            entry = structuredClone(previous.session);
+            mode = "cache";
+          }
+          // Force a complete reparse on the next scan, even when an older
+          // stable snapshot was used for this response.
+          entry._unstable = true;
+        }
         entry.file = file;
         entry.mtime = now.mtimeMs;
-        const signature = mode === "cache" ? previous.fingerprint : await fingerprint(file, now.size);
-        nextIndex[file] = { size: now.size, mtimeMs: now.mtimeMs, fingerprint: signature, session: entry };
+        delete entry._historical;
+        const signature = mode === "cache" && previous && now.size === previous.size &&
+          now.mtimeMs === previous.mtimeMs
+          ? previous.fingerprint : await fingerprint(file, now.size);
+        // Unstable new files are counted in this view, but must be reparsed
+        // next time. The cache stores an invalid mtime to force that.
+        let displayEntry = entry;
+        const historicalCeiling = keepMissing
+          ? (previous?.highWaterSession || previous?.session) : null;
+        const oldVolume = historicalCeiling ? totalTokens(historicalCeiling.usage) : 0;
+        if (historicalCeiling && totalTokens(entry.usage) < oldVolume) {
+          displayEntry = structuredClone(historicalCeiling);
+          displayEntry._historical = true;
+          warnings.push("会话源日志相较上次用量减少，暂保留旧摘要：" + basename(file) +
+            "。请检查是否发生日志截断、覆盖或解析差异。");
+        }
+        nextIndex[file] = {
+          size: now.size, mtimeMs: entry._unstable ? -1 : now.mtimeMs,
+          fingerprint: signature, session: entry,
+          ...(displayEntry !== entry ? { highWaterSession: displayEntry } : {}),
+        };
         filesParsed++;
+        if (compressed) compressedFiles++;
         if (mode === "cache") cacheHits++;
         else if (mode === "resume") resumedFiles++;
         else fullScans++;
@@ -227,22 +300,50 @@ export async function scanCodex(root, {
         if (entry._lineWarnings) warnings.push(
           "跳过 " + entry._lineWarnings + " 行超过 " + Math.round(maxLineBytes / (1024 * 1024)) +
           " MiB 的超长记录：" + basename(file));
-        const old = sessions.get(entry.id);
-        if (!old || old.mtime < entry.mtime) sessions.set(entry.id, entry);
+        sessions.set(displayEntry.id, preferSession(sessions.get(displayEntry.id), displayEntry));
       } catch (error) {
         warnings.push("无法读取 " + basename(file) + "：" + String(error.message || error));
       }
     }
   }
+
+  let missingFiles = 0, missingSessions = 0;
+  if (keepMissing) {
+    for (const [file, cached] of Object.entries(oldIndex)) {
+      if (nextIndex[file] || !cached?.session) continue;
+      missingFiles++;
+      const historical = structuredClone(cached.highWaterSession || cached.session);
+      historical._historical = true;
+      historical.file = file;
+      // This can be a moved/archived duplicate. Reuse the more complete
+      // session but do not double-count both copies.
+      const live = sessions.get(historical.id);
+      if (live && !live._historical &&
+        totalTokens(live.usage) >= totalTokens(historical.usage)) {
+        continue;
+      }
+      nextIndex[file] = { ...cached, session: historical, missing: true };
+      const winner = preferSession(live, historical);
+      sessions.set(historical.id, winner);
+      if (winner === historical && (!live || !live._historical)) missingSessions++;
+    }
+  }
+  if (missingSessions) warnings.push(
+    "有 " + missingSessions + " 个历史会话的原始日志当前不可访问，使用本机旧统计摘要保留用量。"
+    + "如果这是主动删除的日志，可使用 --drop-missing 清除其缓存统计。");
   if (indexFile && !reachedLimit) {
     try { await saveIndex(indexFile, { root, showTitles, timeZone, entries: nextIndex }); }
     catch (error) { warnings.push("无法保存本地统计索引：" + String(error.message || error)); }
   }
   const sorted = [...sessions.values()].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || ""));
+  if (!filesSeen && !sorted.length) warnings.push(
+    "未找到可统计的 Codex 会话日志。请检查 CODEX_HOME、sessions/ 和 archived_sessions/ 路径。");
   return {
     root, scannedAt: new Date().toISOString(), filesSeen, filesParsed,
     malformedLines, warnings: warnings.slice(0, 40),
-    cacheHits, resumedFiles, fullScans, indexedBytes, sessions: sorted,
+    cacheHits, resumedFiles, fullScans, indexedBytes, compressedFiles,
+    missingFiles, historicalSessions: sorted.filter(s => s._historical).length,
+    sessions: sorted,
   };
 }
 
@@ -273,6 +374,7 @@ export function priceReport(snapshot, prices) {
     id: entry.id, title: entry.title, projectPath: entry.projectPath, project: entry.project,
     started: entry.started, lastSeen: entry.lastSeen, turns: entry.turns,
     source: entry.source, usage: entry.usage, warnings: entry.warnings,
+    historical: !!entry._historical,
     buckets: entry.buckets.map(bucket => ({
       ...bucket, pricing: calculateCost(bucket.usage, bucket.model, prices),
     })),
@@ -287,6 +389,9 @@ export function priceReport(snapshot, prices) {
       warnings: snapshot.warnings, priceModels: available.size,
       cacheHits: snapshot.cacheHits ?? 0, resumedFiles: snapshot.resumedFiles ?? 0,
       fullScans: snapshot.fullScans ?? 0, indexedBytes: snapshot.indexedBytes ?? 0,
+      compressedFiles: snapshot.compressedFiles ?? 0,
+      historicalSessions: snapshot.historicalSessions ?? 0,
+      missingFiles: snapshot.missingFiles ?? 0,
     }, sessions,
   };
 }

@@ -6,7 +6,7 @@ Codex Usage View 是本地 Codex JSONL 文件的**只读分析器**。默认不�
 
 ### 读取数据
 
-只读取用户选定 Codex 根目录中的 sessions 与 archived_sessions 子目录下的 .jsonl 文件。
+只读取用户选定 Codex 根目录中 sessions 与 archived_sessions 子目录下的 .jsonl 和 .jsonl.zst 文件（压缩归档会在本机流式解压）。
 
 不读取 auth.json、config.toml、浏览器 Cookie、环境变量中的 API Key、工作区源代码。仅通过 CODEX_HOME 环境变量定位根目录。
 
@@ -29,7 +29,9 @@ Codex Usage View 是本地 Codex JSONL 文件的**只读分析器**。默认不�
 索引不会保存完整用户消息、工具输出或源代码。索引文件尽量使用仅本机账户可读的权限（0o600，受平台文件系统限制），通过临时文件写入和原子替换更新。
 如果不希望留下标题摘要，请使用 --hide-titles；会覆盖同一 Codex 根目录的相应索引状态或另用不同索引文件。
 
-索引只是本地缓存，不会通过网络上传。删除该索引后，下次运行会重新扫描全部会话，不影响 Codex 原始日志。
+索引只是本地缓存，不会通过网络上传。**v0.5.4 起，默认保留原始会话文件丢失或被覆盖前的最后已知派生统计**，以防「全部时间」用量静默下降；因此索引可能在原始日志删除后仍保存会话 ID、原路径、模型、Token 统计及可选的前 110 字标题。这是本地持久化的隐私权衡，而非云端备份。
+
+若希望仅保留当前存在的日志，先关闭软件，再运行 `node src/server.mjs --drop-missing`。若希望清除全部衍生历史，停止程序并删除 `~/.codex-usage-view/usage-index-v2-*.json`（不要删除原始 `~/.codex/` 日志）。删除本地索引后下次启动会重新完整扫描，不会影响原始 Codex 日志。
 
 ### 剩余风险
 

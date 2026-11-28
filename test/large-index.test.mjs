@@ -81,7 +81,14 @@ test("large JSONL (>48 MiB; 9 MiB individual lines) is scanned, indexed, and app
     } }));
   const rewritten = await scanCodex(root, opts);
   assert.equal(rewritten.fullScans, 1);
-  assert.equal(rewritten.sessions[0].usage.input, 5);
+  // A replaced source must not silently erase previously observed history.
+  assert.equal(rewritten.sessions[0].usage.input, 180);
+  assert.equal(rewritten.sessions[0]._historical, true);
+  assert.match(rewritten.warnings.join(" "), /用量减少/);
+  // Explicitly resetting history restores the source-only view.
+  const sourceOnly = await scanCodex(root, { ...opts, keepMissing: false });
+  assert.equal(sourceOnly.sessions[0].usage.input, 5);
+  assert.equal(sourceOnly.historicalSessions, 0);
 }));
 
 test("a partial final JSON line is resumed once it becomes complete", () => sandbox(async root => {
